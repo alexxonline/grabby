@@ -1,0 +1,7 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "c:\\Users\\LENOVO\\projects\\grabby\\grabby-backend\\.venv\\Scripts\\python": true,
+        "c:\\Users\\LENOVO\\projects\\grabby\\grabby-backend\\.venv\\Scripts\\pip": true,
+        ".\\.venv\\Scripts\\python": true
+    }
+}
