@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { RecordingInfo, TranscriptionStatus } from "../api";
 import { AudioPlayer } from "../components/AudioPlayer";
 
-export function RecordingsPage({ path }: { path?: string }) {
+export function RecordingsPage({ path: _path }: { path?: string }) {
   const [recordings, setRecordings] = useState<RecordingInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingFile, setEditingFile] = useState<string | null>(null);

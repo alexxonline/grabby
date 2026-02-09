@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import { api } from "../api";
 import type { RecordingStatus } from "../api";
 
-export function RecorderPage({ path }: { path?: string }) {
+export function RecorderPage({ path: _path }: { path?: string }) {
   const [status, setStatus] = useState<RecordingStatus>({
     recording: false,
     filename: null,
