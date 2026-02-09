@@ -44,3 +44,13 @@ Use Preact for the frontend
 - `elevenlabs` SDK + `python-dotenv` for transcription
 - Frontend uses `preact-router` (not `react-router-dom`)
 - CORS is wide open (`allow_origins=["*"]`) for local dev
+- TypeScript `verbatimModuleSyntax` is enabled — types must use `import type { Foo }` syntax (separate from value imports)
+
+## Search Feature
+- Search page at `/search` — full-text search across all transcripts using SQLite FTS5
+- Backend endpoint: `GET /api/transcriptions/search?q=...` → returns `[{ filename, snippet, language }]`
+- `snippet()` FTS5 function returns matches wrapped in `**...**`; frontend converts these to `<mark>` tags via regex + `dangerouslySetInnerHTML`
+- API client method: `api.searchTranscriptions(query)` in `src/api.ts`
+- Page: `src/pages/SearchPage.tsx` — text input + search button; Enter key triggers search; results link to `/transcription/:filename`
+- Nav link "Search" added to navbar in `app.tsx`
+- CSS styles for search in `src/app.css` under `/* ===== Search Page ===== */`
