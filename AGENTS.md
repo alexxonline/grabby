@@ -23,10 +23,20 @@ Use Preact for the frontend
 ## Frontend Details
 - Routing via `preact-router`
 - API client in `src/api.ts` — all backend calls go through `http://localhost:8000/api`
-- Pages in `src/pages/` — `RecorderPage.tsx` (record controls) and `RecordingsPage.tsx` (list/rename/delete/play)
+- Pages in `src/pages/` — `RecorderPage.tsx` (record controls), `RecordingsPage.tsx` (list/rename/delete/play), and `TranscriptionPage.tsx` (view/edit transcript with speaker rename)
 - Reusable components in `src/components/` — e.g. `AudioPlayer.tsx` (seekable audio player)
 - Global styles in `src/app.css`; CSS variables (theme) defined in `src/index.css`
 - Audio playback uses the HTML `<audio>` element with the backend's `/api/recordings/{filename}/download` endpoint as `src`; no extra dependencies needed
+- Route params: `preact-router` passes URL params as component props (e.g. `/transcription/:filename` → `filename` prop)
+- When destructuring `path` from router props but not using it, prefix with underscore (`_path`) to avoid TS unused-variable errors
+
+## Transcription Feature
+- Transcription page at `/transcription/:filename` — shows full transcript with speaker rename UI
+- Speaker labels (`Speaker A:`, `Speaker B:`, etc.) are extracted via regex and shown as editable chips at the top
+- Clicking a chip opens an inline input; pressing Enter or blurring confirms the rename across the entire transcript text
+- Renames are persisted via `PUT /api/recordings/{filename}/transcription` → `db.update_transcription_text()`
+- The "📝 Transcript" button on RecordingsPage navigates to this page (no longer expands inline)
+- Backend `database.py` has `update_transcription_text()` for updating transcript text in SQLite (triggers keep FTS5 in sync)
 
 ## Dependencies & Gotchas
 - `pyaudiowpatch` is the Windows WASAPI fork of PyAudio — required for loopback recording

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "preact/hooks";
+import { route } from "preact-router";
 import { api } from "../api";
 import type { RecordingInfo, TranscriptionStatus } from "../api";
 import { AudioPlayer } from "../components/AudioPlayer";
@@ -13,7 +14,6 @@ export function RecordingsPage({ path }: { path?: string }) {
 
   // Transcription state
   const [transcriptions, setTranscriptions] = useState<Record<string, TranscriptionStatus>>({});
-  const [expandedTranscript, setExpandedTranscript] = useState<string | null>(null);
   const pollTimers = useRef<Record<string, number>>({});
 
   const fetchRecordings = async () => {
@@ -77,15 +77,11 @@ export function RecordingsPage({ path }: { path?: string }) {
       }
 
       if (status.status === "completed") {
-        setExpandedTranscript(rec.filename);
+        route(`/transcription/${encodeURIComponent(rec.filename)}`);
       }
     } catch (e: any) {
       setError(e.message);
     }
-  };
-
-  const toggleTranscript = (filename: string) => {
-    setExpandedTranscript((prev) => (prev === filename ? null : filename));
   };
 
   const handleDelete = async (filename: string) => {
@@ -205,8 +201,8 @@ export function RecordingsPage({ path }: { path?: string }) {
                   if (ts?.status === "completed") {
                     return (
                       <button
-                        class={`btn btn-sm btn-transcribe done${expandedTranscript === rec.filename ? " active" : ""}`}
-                        onClick={() => toggleTranscript(rec.filename)}
+                        class="btn btn-sm btn-transcribe done"
+                        onClick={() => route(`/transcription/${encodeURIComponent(rec.filename)}`)}
                         title="View transcript"
                       >
                         📝 Transcript
@@ -256,22 +252,6 @@ export function RecordingsPage({ path }: { path?: string }) {
                 </button>
               </div>
               </div>{/* end recording-row */}
-
-              {/* Transcript panel */}
-              {expandedTranscript === rec.filename && transcriptions[rec.filename]?.text && (
-                <div class="transcript-panel">
-                  <div class="transcript-header">
-                    <span class="transcript-label">Transcript</span>
-                    <button
-                      class="btn btn-sm btn-cancel"
-                      onClick={() => setExpandedTranscript(null)}
-                    >
-                      Close
-                    </button>
-                  </div>
-                  <pre class="transcript-text">{transcriptions[rec.filename].text}</pre>
-                </div>
-              )}
             </div>
           ))}
         </div>

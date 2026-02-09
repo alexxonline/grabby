@@ -1,6 +1,7 @@
 import Router from "preact-router";
 import { RecorderPage } from "./pages/RecorderPage";
 import { RecordingsPage } from "./pages/RecordingsPage";
+import { TranscriptionPage } from "./pages/TranscriptionPage";
 import "./app.css";
 
 function Nav() {
@@ -23,6 +24,7 @@ export function App() {
         <Router>
           <RecorderPage path="/" />
           <RecordingsPage path="/recordings" />
+          <TranscriptionPage path="/transcription/:filename" />
         </Router>
       </main>
     </>

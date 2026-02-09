@@ -117,3 +117,14 @@ def rename_transcription(old_filename: str, new_filename: str) -> None:
         (new_filename, old_filename),
     )
     conn.commit()
+
+
+def update_transcription_text(filename: str, text: str) -> bool:
+    """Update the transcription text for a given filename. Returns True if found."""
+    conn = _get_conn()
+    cur = conn.execute(
+        "UPDATE transcriptions SET text = ? WHERE filename = ?",
+        (text, filename),
+    )
+    conn.commit()
+    return cur.rowcount > 0

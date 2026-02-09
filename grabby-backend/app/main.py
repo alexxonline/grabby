@@ -70,6 +70,10 @@ class SearchResult(BaseModel):
     language: str | None = None
 
 
+class UpdateTranscriptionRequest(BaseModel):
+    text: str
+
+
 # Track in-flight transcription jobs
 _transcribing: dict[str, str] = {}  # filename -> status ("pending"|"error")
 _transcribe_errors: dict[str, str] = {}  # filename -> error message
@@ -246,6 +250,22 @@ def get_transcription(filename: str):
         )
 
     return TranscriptionStatus(filename=filename, status="none")
+
+
+@app.put("/api/recordings/{filename}/transcription", response_model=TranscriptionStatus)
+def update_transcription(filename: str, body: UpdateTranscriptionRequest):
+    """Update transcription text (e.g. after speaker rename)."""
+    existing = db.get_transcription(filename)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Transcription not found")
+    db.update_transcription_text(filename, body.text)
+    updated = db.get_transcription(filename)
+    return TranscriptionStatus(
+        filename=filename,
+        status="completed",
+        text=updated["text"],
+        language=updated.get("language"),
+    )
 
 
 @app.get("/api/transcriptions/search", response_model=list[SearchResult])

@@ -82,4 +82,10 @@ export const api = {
     request<SearchResult[]>(
       `/transcriptions/search?q=${encodeURIComponent(query)}`
     ),
+
+  updateTranscription: (filename: string, text: string) =>
+    request<TranscriptionStatus>(
+      `/recordings/${encodeURIComponent(filename)}/transcription`,
+      { method: "PUT", body: JSON.stringify({ text }) }
+    ),
 };
