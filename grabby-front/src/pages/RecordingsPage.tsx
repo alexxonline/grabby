@@ -1,6 +1,7 @@
 import { useState, useEffect } from "preact/hooks";
 import { api } from "../api";
 import type { RecordingInfo } from "../api";
+import { AudioPlayer } from "../components/AudioPlayer";
 
 export function RecordingsPage({ path }: { path?: string }) {
   const [recordings, setRecordings] = useState<RecordingInfo[]>([]);
@@ -8,6 +9,7 @@ export function RecordingsPage({ path }: { path?: string }) {
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [playingRec, setPlayingRec] = useState<RecordingInfo | null>(null);
 
   const fetchRecordings = async () => {
     setLoading(true);
@@ -123,6 +125,13 @@ export function RecordingsPage({ path }: { path?: string }) {
                 </div>
               </div>
               <div class="recording-actions">
+                <button
+                  class={`btn btn-sm btn-play${playingRec?.filename === rec.filename ? " active" : ""}`}
+                  onClick={() => setPlayingRec(playingRec?.filename === rec.filename ? null : rec)}
+                  title={playingRec?.filename === rec.filename ? "Stop" : "Play"}
+                >
+                  {playingRec?.filename === rec.filename ? "⏹" : "▶"}
+                </button>
                 <a
                   class="btn btn-sm btn-download"
                   href={api.downloadUrl(rec.filename)}
@@ -147,6 +156,14 @@ export function RecordingsPage({ path }: { path?: string }) {
             </div>
           ))}
         </div>
+      )}
+
+      {playingRec && (
+        <AudioPlayer
+          src={api.downloadUrl(playingRec.filename)}
+          title={playingRec.name}
+          onClose={() => setPlayingRec(null)}
+        />
       )}
     </div>
   );
