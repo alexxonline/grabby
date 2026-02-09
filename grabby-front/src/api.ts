@@ -13,6 +13,20 @@ export interface RecordingInfo {
   created_at: string;
 }
 
+export interface TranscriptionStatus {
+  filename: string;
+  status: "none" | "pending" | "completed" | "error";
+  text?: string | null;
+  language?: string | null;
+  error?: string | null;
+}
+
+export interface SearchResult {
+  filename: string;
+  snippet: string;
+  language?: string | null;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -52,4 +66,20 @@ export const api = {
 
   downloadUrl: (filename: string) =>
     `${API_BASE}/recordings/${encodeURIComponent(filename)}/download`,
+
+  transcribeRecording: (filename: string) =>
+    request<TranscriptionStatus>(
+      `/recordings/${encodeURIComponent(filename)}/transcribe`,
+      { method: "POST" }
+    ),
+
+  getTranscription: (filename: string) =>
+    request<TranscriptionStatus>(
+      `/recordings/${encodeURIComponent(filename)}/transcription`
+    ),
+
+  searchTranscriptions: (query: string) =>
+    request<SearchResult[]>(
+      `/transcriptions/search?q=${encodeURIComponent(query)}`
+    ),
 };

@@ -1,3 +1,6 @@
 .playwright-mcp
 grabby-backend/recordings
 __pycache__/
+.env
+grabby.db
+grabby.db*

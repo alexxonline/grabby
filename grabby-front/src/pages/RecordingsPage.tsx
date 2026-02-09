@@ -1,6 +1,6 @@
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useRef } from "preact/hooks";
 import { api } from "../api";
-import type { RecordingInfo } from "../api";
+import type { RecordingInfo, TranscriptionStatus } from "../api";
 import { AudioPlayer } from "../components/AudioPlayer";
 
 export function RecordingsPage({ path }: { path?: string }) {
@@ -10,6 +10,11 @@ export function RecordingsPage({ path }: { path?: string }) {
   const [editName, setEditName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [playingRec, setPlayingRec] = useState<RecordingInfo | null>(null);
+
+  // Transcription state
+  const [transcriptions, setTranscriptions] = useState<Record<string, TranscriptionStatus>>({});
+  const [expandedTranscript, setExpandedTranscript] = useState<string | null>(null);
+  const pollTimers = useRef<Record<string, number>>({});
 
   const fetchRecordings = async () => {
     setLoading(true);
@@ -27,6 +32,61 @@ export function RecordingsPage({ path }: { path?: string }) {
   useEffect(() => {
     fetchRecordings();
   }, []);
+
+  // Load transcription status for all recordings
+  useEffect(() => {
+    recordings.forEach((rec) => {
+      if (!transcriptions[rec.filename]) {
+        api.getTranscription(rec.filename).then((status) => {
+          if (status.status !== "none") {
+            setTranscriptions((prev) => ({ ...prev, [rec.filename]: status }));
+          }
+        }).catch(() => {});
+      }
+    });
+  }, [recordings]);
+
+  // Cleanup poll timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(pollTimers.current).forEach(clearInterval);
+    };
+  }, []);
+
+  const handleTranscribe = async (rec: RecordingInfo) => {
+    try {
+      const status = await api.transcribeRecording(rec.filename);
+      setTranscriptions((prev) => ({ ...prev, [rec.filename]: status }));
+
+      if (status.status === "pending") {
+        // Poll for completion
+        const timer = window.setInterval(async () => {
+          try {
+            const updated = await api.getTranscription(rec.filename);
+            setTranscriptions((prev) => ({ ...prev, [rec.filename]: updated }));
+            if (updated.status === "completed" || updated.status === "error") {
+              clearInterval(timer);
+              delete pollTimers.current[rec.filename];
+            }
+          } catch {
+            clearInterval(timer);
+            delete pollTimers.current[rec.filename];
+          }
+        }, 2000);
+        pollTimers.current[rec.filename] = timer;
+      }
+
+      if (status.status === "completed") {
+        setExpandedTranscript(rec.filename);
+      }
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const toggleTranscript = (filename: string) => {
+    setExpandedTranscript((prev) => (prev === filename ? null : filename));
+  };
 
   const handleDelete = async (filename: string) => {
     if (!confirm(`Delete "${filename}"?`)) return;
@@ -93,7 +153,8 @@ export function RecordingsPage({ path }: { path?: string }) {
         <div class="recordings-list">
           {recordings.map((rec) => (
             <div class="recording-item" key={rec.filename}>
-              <div class="recording-info">
+              <div class="recording-row">
+                <div class="recording-info">
                 {editingFile === rec.filename ? (
                   <div class="rename-form">
                     <input
@@ -132,6 +193,47 @@ export function RecordingsPage({ path }: { path?: string }) {
                 >
                   {playingRec?.filename === rec.filename ? "⏹" : "▶"}
                 </button>
+                {(() => {
+                  const ts = transcriptions[rec.filename];
+                  if (ts?.status === "pending") {
+                    return (
+                      <button class="btn btn-sm btn-transcribe" disabled title="Transcribing…">
+                        <span class="spinner" /> Transcribing…
+                      </button>
+                    );
+                  }
+                  if (ts?.status === "completed") {
+                    return (
+                      <button
+                        class={`btn btn-sm btn-transcribe done${expandedTranscript === rec.filename ? " active" : ""}`}
+                        onClick={() => toggleTranscript(rec.filename)}
+                        title="View transcript"
+                      >
+                        📝 Transcript
+                      </button>
+                    );
+                  }
+                  if (ts?.status === "error") {
+                    return (
+                      <button
+                        class="btn btn-sm btn-transcribe error"
+                        onClick={() => handleTranscribe(rec)}
+                        title={`Error: ${ts.error}. Click to retry.`}
+                      >
+                        ⚠ Retry
+                      </button>
+                    );
+                  }
+                  return (
+                    <button
+                      class="btn btn-sm btn-transcribe"
+                      onClick={() => handleTranscribe(rec)}
+                      title="Transcribe recording"
+                    >
+                      Transcribe
+                    </button>
+                  );
+                })()}
                 <a
                   class="btn btn-sm btn-download"
                   href={api.downloadUrl(rec.filename)}
@@ -153,6 +255,23 @@ export function RecordingsPage({ path }: { path?: string }) {
                   Delete
                 </button>
               </div>
+              </div>{/* end recording-row */}
+
+              {/* Transcript panel */}
+              {expandedTranscript === rec.filename && transcriptions[rec.filename]?.text && (
+                <div class="transcript-panel">
+                  <div class="transcript-header">
+                    <span class="transcript-label">Transcript</span>
+                    <button
+                      class="btn btn-sm btn-cancel"
+                      onClick={() => setExpandedTranscript(null)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <pre class="transcript-text">{transcriptions[rec.filename].text}</pre>
+                </div>
+              )}
             </div>
           ))}
         </div>

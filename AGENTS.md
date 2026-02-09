@@ -12,9 +12,13 @@ Use Preact for the frontend
 ## Backend Details
 - Entry point: `grabby-backend/app/main.py` (FastAPI app)
 - Recorder service: `grabby-backend/app/recorder.py` (singleton `MeetingRecorder`)
+- Database: `grabby-backend/app/database.py` — SQLite with FTS5 for transcription storage & search
+- Transcription: `grabby-backend/app/transcription.py` — ElevenLabs Scribe v2 with speaker diarization
+- DB file: `grabby-backend/grabby.db` (auto-created on startup)
 - Python 3.13 is in use — `audioop` was removed; install `audioop-lts` for pydub compatibility
 - pydub requires `ffmpeg` on PATH for MP3 export; without it, recordings fall back to WAV
 - WASAPI loopback captures system audio (other participants); a separate mic stream captures your voice; both are mixed together
+- Requires `ELEVENLABS_API_KEY` env var — set in `grabby-backend/.env` (see `.env.example`)
 
 ## Frontend Details
 - Routing via `preact-router`
@@ -27,5 +31,6 @@ Use Preact for the frontend
 ## Dependencies & Gotchas
 - `pyaudiowpatch` is the Windows WASAPI fork of PyAudio — required for loopback recording
 - `audioop-lts` must be installed alongside `pydub` on Python 3.13+
+- `elevenlabs` SDK + `python-dotenv` for transcription
 - Frontend uses `preact-router` (not `react-router-dom`)
 - CORS is wide open (`allow_origins=["*"]`) for local dev

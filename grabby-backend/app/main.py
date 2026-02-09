@@ -1,14 +1,22 @@
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from .recorder import recorder, RECORDINGS_DIR
+from . import database as db
+from .transcription import transcribe_file
+
+load_dotenv()  # reads .env from CWD (grabby-backend/)
 
 app = FastAPI(title="Grabby – Meeting Recorder")
+
+# Initialise database on startup
+db.init_db()
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,6 +47,32 @@ class RecordingInfo(BaseModel):
 
 class RenameRequest(BaseModel):
     new_name: str
+
+
+class TranscriptionOut(BaseModel):
+    filename: str
+    text: str
+    language: str | None = None
+    status: str = "completed"
+
+
+class TranscriptionStatus(BaseModel):
+    filename: str
+    status: str  # "pending" | "completed" | "error"
+    text: str | None = None
+    language: str | None = None
+    error: str | None = None
+
+
+class SearchResult(BaseModel):
+    filename: str
+    snippet: str
+    language: str | None = None
+
+
+# Track in-flight transcription jobs
+_transcribing: dict[str, str] = {}  # filename -> status ("pending"|"error")
+_transcribe_errors: dict[str, str] = {}  # filename -> error message
 
 
 # ----- Endpoints -----
@@ -100,6 +134,7 @@ def delete_recording(filename: str):
     if not filepath.exists() or not filepath.is_file():
         raise HTTPException(status_code=404, detail="Recording not found")
     filepath.unlink()
+    db.delete_transcription(filename)
     return {"detail": "deleted"}
 
 
@@ -127,6 +162,7 @@ def rename_recording(filename: str, body: RenameRequest):
         counter += 1
 
     filepath.rename(new_path)
+    db.rename_transcription(filename, new_path.name)
     stat = new_path.stat()
     return RecordingInfo(
         filename=new_path.name,
@@ -143,3 +179,85 @@ def download_recording(filename: str):
         raise HTTPException(status_code=404, detail="Recording not found")
     media = "audio/mpeg" if filepath.suffix == ".mp3" else "audio/wav"
     return FileResponse(filepath, media_type=media, filename=filename)
+
+
+# ----- Transcription Endpoints -----
+
+def _do_transcribe(filename: str):
+    """Background task: transcribe file and save to DB."""
+    filepath = RECORDINGS_DIR / filename
+    try:
+        result = transcribe_file(filepath)
+        db.save_transcription(filename, result["text"], result.get("language"))
+        _transcribing[filename] = "completed"
+    except Exception as exc:
+        _transcribing[filename] = "error"
+        _transcribe_errors[filename] = str(exc)
+
+
+@app.post("/api/recordings/{filename}/transcribe", response_model=TranscriptionStatus)
+def start_transcription(filename: str, background_tasks: BackgroundTasks):
+    filepath = RECORDINGS_DIR / filename
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    # If already transcribed, return it
+    existing = db.get_transcription(filename)
+    if existing:
+        return TranscriptionStatus(
+            filename=filename,
+            status="completed",
+            text=existing["text"],
+            language=existing.get("language"),
+        )
+
+    # If already in progress, report pending
+    if _transcribing.get(filename) == "pending":
+        return TranscriptionStatus(filename=filename, status="pending")
+
+    # Launch background transcription
+    _transcribing[filename] = "pending"
+    _transcribe_errors.pop(filename, None)
+    background_tasks.add_task(_do_transcribe, filename)
+    return TranscriptionStatus(filename=filename, status="pending")
+
+
+@app.get("/api/recordings/{filename}/transcription", response_model=TranscriptionStatus)
+def get_transcription(filename: str):
+    # Check DB first
+    existing = db.get_transcription(filename)
+    if existing:
+        return TranscriptionStatus(
+            filename=filename,
+            status="completed",
+            text=existing["text"],
+            language=existing.get("language"),
+        )
+
+    # Check in-flight status
+    status = _transcribing.get(filename)
+    if status == "pending":
+        return TranscriptionStatus(filename=filename, status="pending")
+    if status == "error":
+        return TranscriptionStatus(
+            filename=filename,
+            status="error",
+            error=_transcribe_errors.get(filename, "Unknown error"),
+        )
+
+    return TranscriptionStatus(filename=filename, status="none")
+
+
+@app.get("/api/transcriptions/search", response_model=list[SearchResult])
+def search_transcriptions(q: str):
+    if not q.strip():
+        return []
+    results = db.search_transcriptions(q)
+    return [
+        SearchResult(
+            filename=r["filename"],
+            snippet=r["snippet"],
+            language=r.get("language"),
+        )
+        for r in results
+    ]
