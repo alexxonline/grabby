@@ -41,6 +41,7 @@ export function TranscriptionPage({
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -177,6 +178,16 @@ export function TranscriptionPage({
 
   const decodedName = filename ? decodeURIComponent(filename).replace(/\.[^.]+$/, "") : "";
 
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(displayText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Failed to copy to clipboard");
+    }
+  };
+
   return (
     <div class="page transcription-page">
       <div class="transcription-top-bar">
@@ -184,6 +195,9 @@ export function TranscriptionPage({
           ← Back
         </button>
         <h1>Transcript: {decodedName}</h1>
+        <button class="btn btn-sm btn-copy" onClick={copyToClipboard}>
+          {copied ? "✓ Copied" : "📋 Copy"}
+        </button>
       </div>
 
       {/* Speaker name editor */}

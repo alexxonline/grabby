@@ -188,6 +188,13 @@
   border-radius: 6px;
 }
 
+.btn-copy {
+  background: var(--primary);
+}
+.btn-copy:hover {
+  background: var(--primary-hover);
+}
+
 .btn-download {
   background: var(--primary);
 }
