@@ -19,7 +19,10 @@ Use Preact for the frontend
 ## Frontend Details
 - Routing via `preact-router`
 - API client in `src/api.ts` — all backend calls go through `http://localhost:8000/api`
-- Pages in `src/pages/` — `RecorderPage.tsx` (record controls) and `RecordingsPage.tsx` (list/rename/delete)
+- Pages in `src/pages/` — `RecorderPage.tsx` (record controls) and `RecordingsPage.tsx` (list/rename/delete/play)
+- Reusable components in `src/components/` — e.g. `AudioPlayer.tsx` (seekable audio player)
+- Global styles in `src/app.css`; CSS variables (theme) defined in `src/index.css`
+- Audio playback uses the HTML `<audio>` element with the backend's `/api/recordings/{filename}/download` endpoint as `src`; no extra dependencies needed
 
 ## Dependencies & Gotchas
 - `pyaudiowpatch` is the Windows WASAPI fork of PyAudio — required for loopback recording
