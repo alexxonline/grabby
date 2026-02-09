@@ -76,6 +76,16 @@ class MeetingRecorder:
         return p.get_default_input_device_info()
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _unique_stem(stem: str) -> str:
+        """If a file with this stem already exists in RECORDINGS_DIR, append _1, _2, … until unique."""
+        candidate = stem
+        counter = 1
+        while any(RECORDINGS_DIR.glob(f"{candidate}.*")):
+            candidate = f"{stem}_{counter}"
+            counter += 1
+        return candidate
+
     def start(self, filename: str | None = None):
         with self._lock:
             if self._recording:
@@ -85,6 +95,7 @@ class MeetingRecorder:
             if filename is None:
                 filename = f"recording_{self._started_at.strftime('%Y%m%d_%H%M%S')}"
             filename = filename.removesuffix(".mp3").removesuffix(".wav")
+            filename = self._unique_stem(filename)
             self._current_file = filename
             self._loopback_frames = []
             self._mic_frames = []

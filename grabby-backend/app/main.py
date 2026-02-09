@@ -114,11 +114,17 @@ def rename_recording(filename: str, body: RenameRequest):
         raise HTTPException(status_code=400, detail="Name cannot be empty")
 
     ext = filepath.suffix  # preserve original .mp3 or .wav
-    new_filename = new_name if new_name.endswith(ext) else f"{new_name}{ext}"
-    new_path = RECORDINGS_DIR / new_filename
+    stem = new_name.removesuffix(ext) if new_name.endswith(ext) else new_name
 
-    if new_path.exists():
-        raise HTTPException(status_code=409, detail="A recording with that name already exists")
+    # Avoid filename collision: append _1, _2, … if needed
+    candidate = stem
+    counter = 1
+    while True:
+        new_path = RECORDINGS_DIR / f"{candidate}{ext}"
+        if not new_path.exists() or new_path == filepath:
+            break
+        candidate = f"{stem}_{counter}"
+        counter += 1
 
     filepath.rename(new_path)
     stat = new_path.stat()
