@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .recorder import recorder, RECORDINGS_DIR
@@ -281,3 +282,31 @@ def search_transcriptions(q: str):
         )
         for r in results
     ]
+
+
+# ----- Static Frontend Files -----
+
+FRONTEND_DIST = Path(__file__).parent.parent.parent / "grabby-front" / "dist"
+
+# Mount static assets (JS, CSS, etc.)
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+    
+    # Catch-all for SPA routing: serve index.html for all non-API routes
+    @app.get("/{full_path:path}")
+    def serve_frontend(full_path: str):
+        # Don't serve index.html for API routes (already handled above)
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        
+        # Try to serve the requested file
+        file_path = FRONTEND_DIST / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        
+        # Fall back to index.html for client-side routing
+        index_path = FRONTEND_DIST / "index.html"
+        if index_path.exists():
+            return FileResponse(index_path)
+        
+        raise HTTPException(status_code=404, detail="Frontend not built")
