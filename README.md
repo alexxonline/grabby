@@ -32,7 +32,7 @@ Then it lets you:
 
 - Windows (WASAPI loopback recording)
 - Python 3.13+
-- Node.js 18+
+- Node.js 20.19+ or 22.12+ (required by Vite 8)
 - npm
 - `ffmpeg` on your `PATH` (recommended for MP3 export)
 - ElevenLabs API key (`ELEVENLABS_API_KEY`)

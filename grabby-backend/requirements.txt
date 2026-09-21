@@ -1,8 +1,8 @@
-fastapi==0.115.0
-uvicorn==0.30.6
-pyaudiowpatch==0.2.12.7
+fastapi==0.141.1
+uvicorn==0.53.0
+pyaudiowpatch==0.2.12.8
 pydub==0.25.1
-python-multipart==0.0.9
+python-multipart==0.0.32
 audioop-lts==0.2.2
-elevenlabs>=1.0.0
-python-dotenv>=1.0.0
+elevenlabs==2.68.0
+python-dotenv==1.2.3
