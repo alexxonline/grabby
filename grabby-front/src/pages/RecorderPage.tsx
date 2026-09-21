@@ -13,10 +13,29 @@ export function RecorderPage({ path: _path }: { path?: string }) {
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<number | null>(null);
+  const [savedFile, setSavedFile] = useState<string | null>(null);
+  const [liveError, setLiveError] = useState(false);
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  const followLive = useRef(true);
+  useEffect(() => {
+    if (followLive.current && transcriptRef.current) {
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+    }
+  }, [status.live]);
 
   // Poll status on mount
   useEffect(() => {
-    api.getStatus().then(setStatus).catch(() => {});
+    let active = true;
+    let timeout: number;
+    const poll = async () => {
+      try {
+        const result = await api.getStatus();
+        if (active) { setStatus(result); setLiveError(false); }
+      } catch { if (active) setLiveError(true); }
+      if (active) timeout = window.setTimeout(poll, 500);
+    };
+    void poll();
+    return () => { active = false; window.clearTimeout(timeout); };
   }, []);
 
   // Elapsed timer
@@ -51,6 +70,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
       const res = await api.startRecording(name || undefined);
       setStatus(res);
       setName("");
+      setSavedFile(null);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -64,6 +84,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
     try {
       const res = await api.stopRecording();
       setStatus(res);
+      setSavedFile(res.filename);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -126,7 +147,41 @@ export function RecorderPage({ path: _path }: { path?: string }) {
         </div>
 
         {error && <p class="error">{error}</p>}
+        {liveError && <p class="error">Cannot reach the recorder. Reconnecting…</p>}
+        {savedFile && !status.recording && (
+          <p>Recording saved. The final transcript with speaker diarization is processing.
+            {" "}<a href="/recordings">View recordings</a>
+          </p>
+        )}
       </div>
+      {status.recording && (
+        <section class="live-transcript">
+          <h2>Live transcript</h2>
+          <p>Preview only. The saved transcript is generated with speaker diarization after recording.</p>
+          <p>You = microphone · Others = system audio</p>
+          {(["you", "others"] as const).map(source => (
+            <p key={source} class={status.live?.sources[source].error ? "error" : ""}>
+              <strong>{source === "you" ? "You" : "Others"}:</strong>{" "}
+              {status.live?.sources[source].error || status.live?.sources[source].status || "connecting"}
+            </p>
+          ))}
+          <div class="live-transcript-text" ref={transcriptRef} role="log" aria-label="Live transcript"
+            onScroll={e => {
+              const el = e.currentTarget;
+              followLive.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+            }}>
+            {!status.live?.segments.length && !status.live?.sources.you.partial && !status.live?.sources.others.partial && (
+              <p>Waiting for speech…</p>
+            )}
+            {status.live?.segments.map((segment, index) => (
+              <p key={index}><strong>{segment.source === "you" ? "You" : "Others"}:</strong> {segment.text}</p>
+            ))}
+            {(["you", "others"] as const).map(source => status.live?.sources[source].partial && (
+              <p key={source} class="live-partial"><strong>{source === "you" ? "You" : "Others"}:</strong> {status.live.sources[source].partial}</p>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

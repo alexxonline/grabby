@@ -4,6 +4,12 @@ export interface RecordingStatus {
   recording: boolean;
   filename: string | null;
   started_at: string | null;
+  live?: {
+    segments: { source: "you" | "others"; text: string }[];
+    sources: Record<"you" | "others", {
+      status: string; partial: string; error: string | null;
+    }>;
+  } | null;
 }
 
 export interface RecordingInfo {

@@ -1,3 +1,15 @@
+.live-transcript {
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.live-transcript > p { color: var(--text-muted); }
+.live-transcript-text { max-height: 420px; overflow-y: auto; overflow-wrap: anywhere; }
+.live-transcript-text p { white-space: pre-wrap; line-height: 1.6; }
+.live-partial { opacity: 0.65; }
+
 /* ===== Navbar ===== */
 .navbar {
   display: flex;

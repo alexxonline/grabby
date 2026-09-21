@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pyaudiowpatch as pyaudio
 from pydub import AudioSegment
+from .realtime import LiveTranscript
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +27,8 @@ class MeetingRecorder:
         self._current_file: str | None = None
         self._started_at: datetime | None = None
         self._error: str | None = None
+        self.live: LiveTranscript | None = None
+        self._saving = False
         # Device params (set in _record_loop)
         self._lb_rate: int = 48000
         self._lb_channels: int = 2
@@ -88,7 +91,7 @@ class MeetingRecorder:
 
     def start(self, filename: str | None = None):
         with self._lock:
-            if self._recording:
+            if self._recording or self._saving or (self._thread and self._thread.is_alive()):
                 raise RuntimeError("Already recording")
 
             self._started_at = datetime.now()
@@ -101,6 +104,8 @@ class MeetingRecorder:
             self._mic_frames = []
             self._error = None
             self._recording = True
+            self.live = LiveTranscript()
+            self.live.start()
 
         self._thread = threading.Thread(target=self._record_loop, daemon=True)
         self._thread.start()
@@ -110,15 +115,20 @@ class MeetingRecorder:
             if not self._recording:
                 raise RuntimeError("Not recording")
             self._recording = False
+            self._saving = True
+            if self.live:
+                self.live.stop()
 
-        if self._thread:
-            self._thread.join(timeout=10)
-
-        if self._error:
-            raise RuntimeError(self._error)
-
-        output_path = self._mix_and_save()
-        return output_path
+        try:
+            if self._thread:
+                self._thread.join(timeout=10)
+                if self._thread.is_alive():
+                    raise RuntimeError("Audio capture is still stopping; please wait")
+            if self._error:
+                raise RuntimeError(self._error)
+            return self._mix_and_save()
+        finally:
+            self._saving = False
 
     # ------------------------------------------------------------------
     def _record_loop(self):
@@ -130,6 +140,8 @@ class MeetingRecorder:
             if loopback_dev is None:
                 self._error = "No WASAPI loopback device found"
                 self._recording = False
+                self.live.stop()
+                p.terminate()
                 return
 
             # Use each device's NATIVE sample rate and channels
@@ -165,6 +177,7 @@ class MeetingRecorder:
             log.exception("Failed to open audio streams")
             self._error = f"Failed to open audio streams: {exc}"
             self._recording = False
+            self.live.stop()
             p.terminate()
             return
 
@@ -173,6 +186,7 @@ class MeetingRecorder:
                 try:
                     lb_data = loopback_stream.read(1024, exception_on_overflow=False)
                     self._loopback_frames.append(lb_data)
+                    self.live.feed("others", lb_data, self._lb_rate, self._lb_channels)
                 except Exception:
                     if not self._recording:
                         break
@@ -180,6 +194,7 @@ class MeetingRecorder:
                 try:
                     mic_data = mic_stream.read(1024, exception_on_overflow=False)
                     self._mic_frames.append(mic_data)
+                    self.live.feed("you", mic_data, self._mic_rate, self._mic_channels)
                 except Exception:
                     if not self._recording:
                         break

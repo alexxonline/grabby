@@ -53,28 +53,31 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
     };
   }, []);
 
+  useEffect(() => {
+    Object.entries(transcriptions).forEach(([filename, status]) => {
+      if (status.status === "pending" && !pollTimers.current[filename]) {
+        // Poll for completion
+        const timer = window.setInterval(async () => {
+          try {
+            const updated = await api.getTranscription(filename);
+            setTranscriptions((prev) => ({ ...prev, [filename]: updated }));
+            if (updated.status === "completed" || updated.status === "error") {
+              clearInterval(timer);
+              delete pollTimers.current[filename];
+            }
+          } catch {
+            // Retry transient network failures on the next interval.
+          }
+        }, 2000);
+        pollTimers.current[filename] = timer;
+      }
+    });
+  }, [transcriptions]);
+
   const handleTranscribe = async (rec: RecordingInfo) => {
     try {
       const status = await api.transcribeRecording(rec.filename);
       setTranscriptions((prev) => ({ ...prev, [rec.filename]: status }));
-
-      if (status.status === "pending") {
-        // Poll for completion
-        const timer = window.setInterval(async () => {
-          try {
-            const updated = await api.getTranscription(rec.filename);
-            setTranscriptions((prev) => ({ ...prev, [rec.filename]: updated }));
-            if (updated.status === "completed" || updated.status === "error") {
-              clearInterval(timer);
-              delete pollTimers.current[rec.filename];
-            }
-          } catch {
-            clearInterval(timer);
-            delete pollTimers.current[rec.filename];
-          }
-        }, 2000);
-        pollTimers.current[rec.filename] = timer;
-      }
 
       if (status.status === "completed") {
         route(`/transcription/${encodeURIComponent(rec.filename)}`);

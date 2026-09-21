@@ -37,6 +37,7 @@ class RecordingStatus(BaseModel):
     recording: bool
     filename: str | None = None
     started_at: str | None = None
+    live: dict | None = None
 
 
 class RecordingInfo(BaseModel):
@@ -88,6 +89,7 @@ def get_status():
         recording=recorder.is_recording,
         filename=recorder.current_file,
         started_at=recorder.started_at.isoformat() if recorder.started_at else None,
+        live=recorder.live.snapshot() if recorder.is_recording and recorder.live else None,
     )
 
 
@@ -106,12 +108,15 @@ def start_recording(body: StartRequest | None = None):
 
 
 @app.post("/api/stop", response_model=RecordingStatus)
-def stop_recording():
+def stop_recording(background_tasks: BackgroundTasks):
     try:
-        recorder.stop()
+        filepath = Path(recorder.stop())
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return RecordingStatus(recording=False)
+    _transcribing[filepath.name] = "pending"
+    _transcribe_errors.pop(filepath.name, None)
+    background_tasks.add_task(_do_transcribe, filepath.name)
+    return RecordingStatus(recording=False, filename=filepath.name)
 
 
 @app.get("/api/recordings", response_model=list[RecordingInfo])
