@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 import { api } from "../api";
 import type { RecordingStatus } from "../api";
+import { RecordingTabs } from "../components/RecordingTabs";
 
 export function RecorderPage({ path: _path }: { path?: string }) {
   const [status, setStatus] = useState<RecordingStatus>({
@@ -154,7 +155,9 @@ export function RecorderPage({ path: _path }: { path?: string }) {
           </p>
         )}
       </div>
-      {status.recording && (
+      {status.notes_id && (
+        <RecordingTabs notesId={status.notes_id} live={status.recording}>
+        {status.recording ? (
         <section class="live-transcript">
           <h2>Live transcript</h2>
           <p>Preview only. The saved transcript is generated with speaker diarization after recording.</p>
@@ -181,6 +184,8 @@ export function RecorderPage({ path: _path }: { path?: string }) {
             ))}
           </div>
         </section>
+        ) : <p class="empty">Recording finished. <a href="/recordings">View the final transcript in Recordings.</a></p>}
+        </RecordingTabs>
       )}
     </div>
   );

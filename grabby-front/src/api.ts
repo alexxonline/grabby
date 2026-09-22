@@ -4,6 +4,7 @@ export interface RecordingStatus {
   recording: boolean;
   filename: string | null;
   started_at: string | null;
+  notes_id?: string | null;
   live?: {
     segments: { source: "you" | "others"; text: string }[];
     sources: Record<"you" | "others", {
@@ -58,6 +59,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getNotes: (id: string) => request<{ id: string; text: string }>(`/notes/${encodeURIComponent(id)}`),
+  getRecordingNotes: (filename: string) =>
+    request<{ id: string; text: string }>(`/recordings/${encodeURIComponent(filename)}/notes`),
+  saveNotes: (id: string, text: string) =>
+    request<{ id: string; text: string }>(`/notes/${encodeURIComponent(id)}`, {
+      method: "PUT", body: JSON.stringify({ text }), keepalive: true,
+    }),
   getSettings: () => request<Settings>("/settings"),
   updateSettings: (settings: Pick<Settings, "auto_delete_audio" | "auto_title">) =>
     request<Settings>("/settings", { method: "PUT", body: JSON.stringify(settings) }),

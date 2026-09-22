@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import { route } from "preact-router";
 import { api } from "../api";
 import type { TranscriptionStatus } from "../api";
+import { RecordingTabs } from "../components/RecordingTabs";
 
 interface SpeakerEntry {
   original: string; // e.g. "Speaker A"
@@ -48,18 +49,25 @@ export function TranscriptionPage({
 
   useEffect(() => {
     if (!filename) return;
+    let active = true;
+    let timer: number;
     setLoading(true);
-    api
-      .getTranscription(filename)
-      .then((ts) => {
+    setError(null);
+    setDisplayText("");
+    setSpeakers([]);
+    const poll = () => api.getTranscription(filename).then((ts) => {
+        if (!active) return;
         setTranscription(ts);
         if (ts.status === "completed" && ts.text) {
           setDisplayText(ts.text);
           setSpeakers(extractSpeakers(ts.text));
         }
+        if (ts.status === "pending") timer = window.setTimeout(poll, 2000);
       })
-      .catch((e: any) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e: Error) => { if (active) setError(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    void poll();
+    return () => { active = false; clearTimeout(timer); };
   }, [filename]);
 
   useEffect(() => {
@@ -154,7 +162,7 @@ export function TranscriptionPage({
     );
   }
 
-  if (error) {
+  if (error && !filename) {
     return (
       <div class="page">
         <p class="error">{error}</p>
@@ -165,7 +173,7 @@ export function TranscriptionPage({
     );
   }
 
-  if (!transcription || transcription.status !== "completed" || !displayText) {
+  if (!filename) {
     return (
       <div class="page">
         <p class="empty">No transcription available for this recording.</p>
@@ -194,12 +202,18 @@ export function TranscriptionPage({
         <button class="btn btn-sm btn-cancel" onClick={() => route("/recordings")}>
           ← Back
         </button>
-        <h1>Transcript: {transcription.title || decodedName}</h1>
-        <button class="btn btn-sm btn-copy" onClick={copyToClipboard}>
+        <h1>{transcription?.title || decodedName}</h1>
+        <button class="btn btn-sm btn-copy" disabled={!displayText} onClick={copyToClipboard}>
           {copied ? "✓ Copied" : "📋 Copy"}
         </button>
       </div>
 
+      <RecordingTabs filename={filename} initialNotes={new URLSearchParams(location.search).get("tab") === "notes"}>
+      {error && <p class="error">{error}</p>}
+      {transcription?.status !== "completed" && <p class="empty">
+        {transcription?.status === "pending" ? "The transcript is processing. You can add notes now." :
+          transcription?.status === "error" ? `Transcription failed: ${transcription.error}` : "No transcription available yet. You can still add notes."}
+      </p>}
       {/* Speaker name editor */}
       {speakers.length > 0 && (
         <div class="speaker-editor">
@@ -236,7 +250,8 @@ export function TranscriptionPage({
       )}
 
       {/* Transcript body */}
-      <div class="transcript-body">{renderTranscript(displayText)}</div>
+      {transcription?.status === "completed" && <div class="transcript-body">{renderTranscript(displayText)}</div>}
+      </RecordingTabs>
     </div>
   );
 }

@@ -30,6 +30,7 @@ class MeetingRecorder:
         self._error: str | None = None
         self.live: LiveTranscript | None = None
         self._saving = False
+        self.notes_id: str | None = None
         # Device params (set in _record_loop)
         self._lb_rate: int = 48000
         self._lb_channels: int = 2
@@ -102,6 +103,7 @@ class MeetingRecorder:
             filename = filename.removesuffix(".mp3").removesuffix(".wav")
             filename = self._unique_stem(filename)
             self._current_file = filename
+            self.notes_id = db.create_notes()["id"]
             self._loopback_frames = []
             self._mic_frames = []
             self._error = None
@@ -271,6 +273,7 @@ class MeetingRecorder:
         self._loopback_frames.clear()
         self._mic_frames.clear()
 
+        db.attach_notes(self.notes_id, output_file.name)
         return str(output_file)
 
 

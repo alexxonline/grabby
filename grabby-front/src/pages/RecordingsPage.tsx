@@ -198,6 +198,7 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
                 </div>
               </div>
               <div class="recording-actions">
+                <a class="btn btn-sm btn-rename" href={`/transcription/${encodeURIComponent(rec.filename)}?tab=notes`}>Notes</a>
                 {rec.audio_available && <button
                   class={`btn btn-sm btn-play${playingRec?.filename === rec.filename ? " active" : ""}`}
                   onClick={() => setPlayingRec(playingRec?.filename === rec.filename ? null : rec)}

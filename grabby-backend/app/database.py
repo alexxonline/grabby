@@ -2,6 +2,7 @@
 
 import sqlite3
 import threading
+import uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -27,6 +28,11 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS recording_notes (
+            id TEXT PRIMARY KEY,
+            filename TEXT UNIQUE,
+            text TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS recording_metadata (
             filename TEXT PRIMARY KEY,
@@ -189,3 +195,31 @@ def delete_metadata(filename: str) -> None:
     conn = _get_conn()
     with conn:
         conn.execute("DELETE FROM recording_metadata WHERE filename = ?", (filename,))
+        conn.execute("DELETE FROM recording_notes WHERE filename = ?", (filename,))
+
+
+def create_notes(filename: str | None = None) -> dict:
+    conn = _get_conn()
+    notes_id = str(uuid.uuid4())
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO recording_notes (id, filename) VALUES (?, ?)",
+                     (notes_id, filename))
+    row = conn.execute("SELECT id, text FROM recording_notes WHERE filename = ? OR id = ?",
+                       (filename, notes_id)).fetchone()
+    return dict(row)
+
+
+def attach_notes(notes_id: str, filename: str) -> None:
+    with _get_conn() as conn:
+        conn.execute("UPDATE recording_notes SET filename = ? WHERE id = ?", (filename, notes_id))
+
+
+def get_notes(notes_id: str) -> dict | None:
+    row = _get_conn().execute("SELECT id, text FROM recording_notes WHERE id = ?", (notes_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def save_notes(notes_id: str, text: str) -> bool:
+    with _get_conn() as conn:
+        result = conn.execute("UPDATE recording_notes SET text = ? WHERE id = ?", (text, notes_id))
+    return result.rowcount > 0

@@ -1,3 +1,16 @@
+.recording-details { margin-top: 1.5rem; }
+.recording-tabs { display: flex; gap: .5rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+.recording-tabs button { padding: .75rem 1rem; background: transparent; color: var(--text-muted); border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; }
+.recording-tabs button[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
+.recording-tabs button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.notes-editor { padding: 1.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.notes-editor label { font-weight: 600; }
+.notes-hint, .notes-footer { color: var(--text-muted); font-size: .85rem; line-height: 1.6; }
+.notes-editor textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 220px; padding: 1rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; line-height: 1.7; }
+.notes-editor textarea:focus { outline: 2px solid var(--primary); outline-offset: 2px; }
+.notes-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: .75rem; }
+.recording-actions { flex-wrap: wrap; }
+@media (max-width: 600px) { .recording-row { flex-wrap: wrap; } .transcription-top-bar { flex-wrap: wrap; } }
 .live-transcript {
   margin-top: 1.5rem;
   padding: 1.5rem;

@@ -45,6 +45,7 @@ class RecordingStatus(BaseModel):
     filename: str | None = None
     started_at: str | None = None
     live: dict | None = None
+    notes_id: str | None = None
 
 
 class RecordingInfo(BaseModel):
@@ -141,6 +142,7 @@ def _require_idle(filename: str):
 def get_status():
     return RecordingStatus(
         recording=recorder.is_recording,
+        notes_id=recorder.notes_id,
         filename=recorder.current_file,
         started_at=recorder.started_at.isoformat() if recorder.started_at else None,
         live=recorder.live.snapshot() if recorder.is_recording and recorder.live else None,
@@ -156,6 +158,7 @@ def start_recording(body: StartRequest | None = None):
         raise HTTPException(status_code=409, detail=str(e))
     return RecordingStatus(
         recording=True,
+        notes_id=recorder.notes_id,
         filename=recorder.current_file,
         started_at=recorder.started_at.isoformat() if recorder.started_at else None,
     )
@@ -170,7 +173,28 @@ def stop_recording(background_tasks: BackgroundTasks):
     _transcribing[filepath.name] = "pending"
     _transcribe_errors.pop(filepath.name, None)
     background_tasks.add_task(_do_transcribe, filepath.name)
-    return RecordingStatus(recording=False, filename=filepath.name)
+    return RecordingStatus(recording=False, filename=filepath.name, notes_id=recorder.notes_id)
+
+
+@app.get("/api/recordings/{filename}/notes")
+def get_recording_notes(filename: str):
+    _recording_info(filename)
+    return db.create_notes(filename)
+
+
+@app.get("/api/notes/{notes_id}")
+def get_notes(notes_id: str):
+    notes = db.get_notes(notes_id)
+    if notes is None:
+        raise HTTPException(status_code=404, detail="Notes not found")
+    return notes
+
+
+@app.put("/api/notes/{notes_id}")
+def update_notes(notes_id: str, body: UpdateTranscriptionRequest):
+    if not db.save_notes(notes_id, body.text):
+        raise HTTPException(status_code=404, detail="Notes not found")
+    return {"id": notes_id, "text": body.text}
 
 
 @app.get("/api/recordings", response_model=list[RecordingInfo])
