@@ -32,6 +32,8 @@ class MeetingRecorder:
         self._error: str | None = None
         self.live: LiveTranscript | None = None
         self._saving = False
+        self._save_pending = False
+        self._saved_output: Path | None = None
         self.notes_id: str | None = None
         # Device params (set in _record_loop)
         self._lb_rate: int = 48000
@@ -55,6 +57,14 @@ class MeetingRecorder:
     @property
     def error(self) -> str | None:
         return self._error
+
+    @property
+    def save_pending(self) -> bool:
+        return self._save_pending
+
+    @property
+    def is_saving(self) -> bool:
+        return self._saving
 
     def _capture_failed(self, exc: Exception):
         self._error = f"Audio capture failed: {exc}"
@@ -124,6 +134,8 @@ class MeetingRecorder:
 
     def start(self, filename: str | None = None):
         with self._lock:
+            if self._save_pending:
+                raise RuntimeError("Save the previous recording before starting another. Use Retry Save.")
             if self._recording or self._saving or (self._thread and self._thread.is_alive()):
                 raise RuntimeError("Already recording")
 
@@ -139,6 +151,7 @@ class MeetingRecorder:
             self._capture_dir = RECORDINGS_DIR / f".capture-{uuid.uuid4().hex}"
             self._capture_dir.mkdir()
             self._error = None
+            self._saved_output = None
             self._recording = True
             self.live = None
             try:
@@ -154,23 +167,32 @@ class MeetingRecorder:
 
     def stop(self) -> str:
         with self._lock:
-            if not self._recording:
+            if self._saving:
+                raise RuntimeError("Recording is already being saved")
+            if not self._recording and not self._save_pending:
                 raise RuntimeError(self._error or "Not recording")
             self._recording = False
+            self._save_pending = True
             self._saving = True
-            if self.live:
-                self.live.stop()
 
         try:
+            if self.live:
+                self.live.stop()
             if self._thread:
                 self._thread.join(timeout=10)
                 if self._thread.is_alive():
                     raise RuntimeError("Audio capture is still stopping; please wait")
-            if self._error:
-                raise RuntimeError(self._error)
-            return self._mix_and_save()
+            output = self._mix_and_save()
+            self._save_pending = False
+            self._error = None
+            return output
+        except Exception as exc:
+            log.exception("Saving recording failed; captured audio retained for retry")
+            self._error = f"Could not save recording: {exc}. Resolve the problem and use Retry Save."
+            raise RuntimeError(self._error) from exc
         finally:
-            self._saving = False
+            with self._lock:
+                self._saving = False
 
     # ------------------------------------------------------------------
     def _record_loop(self):
@@ -290,22 +312,29 @@ class MeetingRecorder:
         # Keep intermediate and incomplete exports out of the recordings listing.
         mixed_wav = self._capture_dir / "mixed.wav"
         encoded_mp3 = self._capture_dir / "mixed.mp3"
-        self._mix_to_wav(mixed_wav)
-        try:
-            self._export_mp3(mixed_wav, encoded_mp3)
-        except (OSError, subprocess.SubprocessError):
-            log.warning("MP3 export unavailable; keeping WAV", exc_info=True)
-            output_file = RECORDINGS_DIR / f"{self._current_file}.wav"
-            mixed_wav.replace(output_file)
-        else:
-            output_file = RECORDINGS_DIR / f"{self._current_file}.mp3"
-            encoded_mp3.replace(output_file)
+        if self._saved_output is None:
+            self._mix_to_wav(mixed_wav)
+            try:
+                self._export_mp3(mixed_wav, encoded_mp3)
+            except (OSError, subprocess.SubprocessError):
+                log.warning("MP3 export unavailable; keeping WAV", exc_info=True)
+                output_file = RECORDINGS_DIR / f"{self._current_file}.wav"
+                mixed_wav.replace(output_file)
+            else:
+                output_file = RECORDINGS_DIR / f"{self._current_file}.mp3"
+                encoded_mp3.replace(output_file)
+            # If attaching notes fails, retry it without exporting a second file.
+            self._saved_output = output_file
 
+        output_file = self._saved_output
         db.attach_notes(self.notes_id, output_file.name)
-        # Preserve captured PCM on failures so the audio can be recovered.
-        for name in ("loopback.pcm", "mic.pcm", "mixed.wav", "mixed.mp3"):
-            (self._capture_dir / name).unlink(missing_ok=True)
-        self._capture_dir.rmdir()
+        # Cleanup failure must not turn an already saved recording into a failed save.
+        try:
+            for name in ("loopback.pcm", "mic.pcm", "mixed.wav", "mixed.mp3"):
+                (self._capture_dir / name).unlink(missing_ok=True)
+            self._capture_dir.rmdir()
+        except OSError:
+            log.warning("Recording saved, but temporary audio cleanup failed", exc_info=True)
         self._capture_dir = None
         return str(output_file)
 

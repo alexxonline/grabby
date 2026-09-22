@@ -101,7 +101,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
         {/* Status indicator */}
         <div class={`status-badge ${status.recording ? "recording" : "idle"}`}>
           <span class="status-dot" />
-          {operation === "stopping" ? "Saving recording…" : operation === "starting" ? "Starting…" : status.recording ? "Recording" : "Ready"}
+          {operation === "stopping" || status.saving ? "Saving recording…" : operation === "starting" ? "Starting…" : status.recording ? "Recording" : status.save_pending ? "Save required" : "Ready"}
         </div>
 
         {/* Timer */}
@@ -110,7 +110,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
         )}
 
         {/* Name input */}
-        {!status.recording && operation === null && (
+        {!status.recording && !status.save_pending && operation === null && (
           <div class="name-input">
             <input
               type="text"
@@ -130,10 +130,10 @@ export function RecorderPage({ path: _path }: { path?: string }) {
         <div class="controls">
           <button
             class={`btn ${operation === "stopping" || (operation === null && status.recording) ? "btn-stop" : "btn-start"}`}
-            onClick={status.recording ? handleStop : handleStart}
-            disabled={operation !== null}
+            onClick={status.recording || status.save_pending ? handleStop : handleStart}
+            disabled={operation !== null || status.saving}
           >
-            {operation === "stopping" ? "Stopping…" : operation === "starting" ? "Starting…" : status.recording ? "Stop Recording" : "Start Recording"}
+            {operation === "stopping" || status.saving ? "Saving…" : operation === "starting" ? "Starting…" : status.recording ? "Stop Recording" : status.save_pending ? "Retry Save" : "Start Recording"}
           </button>
         </div>
 

@@ -89,6 +89,8 @@ class StartRequest(BaseModel):
 
 class RecordingStatus(BaseModel):
     recording: bool
+    save_pending: bool = False
+    saving: bool = False
     error: str | None = None
     filename: str | None = None
     started_at: str | None = None
@@ -190,7 +192,7 @@ def _recording_info(filename: str) -> RecordingInfo:
 
 
 def _require_idle(filename: str):
-    if _transcribing.get(filename) == "pending" or (recorder.is_recording and Path(filename).stem == recorder.current_file):
+    if _transcribing.get(filename) == "pending" or ((recorder.is_recording or recorder.save_pending) and Path(filename).stem == recorder.current_file):
         raise HTTPException(status_code=409, detail="Wait until recording and processing finish.")
 
 
@@ -198,6 +200,8 @@ def _require_idle(filename: str):
 def get_status():
     return RecordingStatus(
         recording=recorder.is_recording,
+        save_pending=recorder.save_pending,
+        saving=recorder.is_saving,
         error=recorder.error,
         notes_id=recorder.notes_id,
         filename=recorder.current_file,

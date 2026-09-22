@@ -2,6 +2,8 @@ const API_BASE = "http://localhost:8000/api";
 
 export interface RecordingStatus {
   recording: boolean;
+  save_pending?: boolean;
+  saving?: boolean;
   error?: string | null;
   filename: string | null;
   started_at: string | null;

@@ -29,6 +29,100 @@ class RecorderTests(unittest.TestCase):
     def write_pcm(self, name, samples):
         (self.recorder._capture_dir / name).write_bytes(array("h", samples).tobytes())
 
+    def test_stop_failure_can_retry_without_losing_audio_or_notes(self):
+        from fastapi import BackgroundTasks, HTTPException
+        from app import main
+
+        recorder = self.recorder
+        recorder._recording = True
+        self.write_pcm("loopback.pcm", [1000] * 100)
+        self.write_pcm("mic.pcm", [2000] * 100)
+        capture = recorder._capture_dir
+        with patch.object(main, "recorder", recorder), \
+                patch("app.recorder.RECORDINGS_DIR", self.root), \
+                patch("app.recorder.db.attach_notes") as attach:
+            tasks = BackgroundTasks()
+            with patch.object(recorder, "_mix_to_wav", side_effect=OSError("disk full")), \
+                    self.assertLogs("app.recorder", level="ERROR"), \
+                    self.assertRaises(HTTPException):
+                main.stop_recording(tasks)
+            self.assertEqual(tasks.tasks, [])
+            self.assertFalse(recorder.is_recording)
+            self.assertTrue(main.get_status().save_pending)
+            self.assertFalse(main.get_status().saving)
+            self.assertIn("Retry Save", recorder.error)
+            self.assertTrue((capture / "loopback.pcm").exists())
+            with self.assertRaisesRegex(RuntimeError, "previous recording"):
+                recorder.start("next")
+            with patch.object(recorder, "_export_mp3", side_effect=FileNotFoundError()), \
+                    self.assertLogs("app.recorder", level="WARNING"):
+                result = main.stop_recording(tasks)
+            self.assertEqual(result.filename, "meeting.wav")
+            self.assertEqual(len(tasks.tasks), 1)
+            self.assertFalse(recorder.save_pending)
+            self.assertIsNone(recorder.error)
+            attach.assert_called_once_with("notes", "meeting.wav")
+            self.assertFalse(capture.exists())
+            main._transcribing.pop("meeting.wav", None)
+
+    def test_notes_failure_retries_existing_export(self):
+        recorder = self.recorder
+        recorder._recording = True
+        self.write_pcm("loopback.pcm", [1000] * 100)
+        self.write_pcm("mic.pcm", [2000] * 100)
+
+        def export(source, output):
+            output.write_bytes(b"encoded audio")
+
+        with patch("app.recorder.RECORDINGS_DIR", self.root), \
+                patch.object(recorder, "_export_mp3", side_effect=export) as encode, \
+                patch("app.recorder.db.attach_notes", side_effect=[RuntimeError("database locked"), None]):
+            with self.assertLogs("app.recorder", level="ERROR"), self.assertRaises(RuntimeError):
+                recorder.stop()
+            self.assertTrue(recorder.save_pending)
+            self.assertEqual((self.root / "meeting.mp3").read_bytes(), b"encoded audio")
+            output = recorder.stop()
+            encode.assert_called_once()
+            self.assertEqual(Path(output).name, "meeting.mp3")
+            self.assertFalse(recorder.save_pending)
+
+    def test_cleanup_failure_does_not_fail_saved_recording(self):
+        recorder = self.recorder
+        recorder._recording = True
+        self.write_pcm("loopback.pcm", [1000] * 100)
+        self.write_pcm("mic.pcm", [2000] * 100)
+        with patch("app.recorder.RECORDINGS_DIR", self.root), \
+                patch("app.recorder.db.attach_notes"), \
+                patch.object(recorder, "_export_mp3", side_effect=FileNotFoundError()), \
+                patch.object(Path, "unlink", side_effect=PermissionError("locked")), \
+                self.assertLogs("app.recorder", level="WARNING"):
+            output = recorder.stop()
+        self.assertTrue(Path(output).exists())
+        self.assertFalse(recorder.save_pending)
+        self.assertIsNone(recorder.error)
+
+    def test_still_stopping_capture_can_be_saved_later(self):
+        recorder = self.recorder
+        recorder._recording = True
+        recorder._thread = MagicMock()
+        recorder._thread.is_alive.return_value = True
+        with patch.object(recorder, "_mix_and_save", return_value="meeting.wav") as save:
+            with self.assertLogs("app.recorder", level="ERROR"), self.assertRaises(RuntimeError):
+                recorder.stop()
+            save.assert_not_called()
+            self.assertTrue(recorder.save_pending)
+            recorder._thread.is_alive.return_value = False
+            self.assertEqual(recorder.stop(), "meeting.wav")
+            save.assert_called_once()
+
+    def test_concurrent_save_is_rejected(self):
+        self.recorder._save_pending = True
+        self.recorder._saving = True
+        with patch.object(self.recorder, "_mix_and_save") as save:
+            with self.assertRaisesRegex(RuntimeError, "already being saved"):
+                self.recorder.stop()
+            save.assert_not_called()
+
     def test_audio_initialization_failure_is_visible_in_status_and_stop(self):
         from app import main
 
