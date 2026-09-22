@@ -16,9 +16,21 @@ def _get_conn() -> sqlite3.Connection:
     if not hasattr(_local, "conn") or _local.conn is None:
         conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.Error:
+            conn.close()
+            raise
         _local.conn = conn
     return _local.conn
+
+
+def close_connection() -> None:
+    """Close this thread's connection, including after failed initialization."""
+    conn = getattr(_local, "conn", None)
+    _local.conn = None
+    if conn is not None:
+        conn.close()
 
 
 def init_db() -> None:

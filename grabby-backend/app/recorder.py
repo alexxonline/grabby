@@ -17,7 +17,6 @@ from . import database as db
 log = logging.getLogger(__name__)
 
 RECORDINGS_DIR = Path(__file__).resolve().parent.parent / "recordings"
-RECORDINGS_DIR.mkdir(exist_ok=True)
 
 
 class MeetingRecorder:
@@ -119,6 +118,7 @@ class MeetingRecorder:
             if filename is None:
                 filename = f"recording_{started_at.strftime('%Y%m%d_%H%M%S')}"
             filename = self._validate_stem(filename)
+            RECORDINGS_DIR.mkdir(exist_ok=True)
             filename = self._unique_stem(filename)
             self._started_at = started_at
             self._current_file = filename

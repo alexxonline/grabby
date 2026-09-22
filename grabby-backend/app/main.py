@@ -1,12 +1,17 @@
 import os
+import logging
+import sqlite3
+import threading
+import time
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from .recorder import recorder, RECORDINGS_DIR
@@ -16,10 +21,52 @@ from .titles import suggest_title, MODEL
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-app = FastAPI(title="Grabby – Meeting Recorder")
+log = logging.getLogger(__name__)
+_database_ready = False
+_database_retry_at = 0.0
+_database_lock = threading.Lock()
+DATABASE_UNAVAILABLE = "Database unavailable. Check backend logs and database permissions; requests will retry automatically."
 
-# Initialise database on startup
-db.init_db()
+
+def _ensure_database() -> bool:
+    global _database_ready, _database_retry_at
+    with _database_lock:
+        if _database_ready:
+            return True
+        if time.monotonic() < _database_retry_at:
+            return False
+        try:
+            db.init_db()
+        except (sqlite3.Error, OSError):
+            log.exception("Database initialization failed; backend will remain available and retry")
+            _database_retry_at = time.monotonic() + 5
+        else:
+            _database_ready = True
+        finally:
+            # Do not retain a failed/stale startup connection between attempts.
+            db.close_connection()
+        return _database_ready
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _database_ready, _database_retry_at
+    _database_ready = False
+    _database_retry_at = 0.0
+    await run_in_threadpool(_ensure_database)
+    yield
+
+
+def require_database(request: Request):
+    path = request.url.path.rstrip("/")
+    if path.startswith("/api/") and path not in ("/api/status", "/api/health"):
+        if not _ensure_database():
+            raise HTTPException(status_code=503, detail=DATABASE_UNAVAILABLE,
+                                headers={"Retry-After": "5"})
+
+
+app = FastAPI(title="Grabby – Meeting Recorder", lifespan=lifespan,
+              dependencies=[Depends(require_database)])
 
 app.add_middleware(
     CORSMiddleware,
@@ -95,6 +142,14 @@ _transcribe_errors: dict[str, str] = {}  # filename -> error message
 
 
 # ----- Endpoints -----
+
+@app.get("/api/health")
+def get_health():
+    ready = _ensure_database()
+    return JSONResponse(status_code=200 if ready else 503, content={
+        "status": "ok" if ready else "degraded",
+        "database": "ready" if ready else "unavailable",
+    })
 
 @app.get("/api/settings")
 def get_settings():
@@ -374,25 +429,20 @@ def _frontend_path(full_path: str) -> Path:
     return candidate
 
 
-# Mount static assets (JS, CSS, etc.)
-if FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
-    
-    # Catch-all for SPA routing: serve index.html for all non-API routes
-    @app.get("/{full_path:path}")
-    def serve_frontend(full_path: str):
-        # Don't serve index.html for API routes (already handled above)
-        if full_path.startswith("api/"):
-            raise HTTPException(status_code=404, detail="Not found")
-        
-        # Try to serve the requested file
+# Check optional frontend files when requested, not during backend import.
+@app.get("/{full_path:path}")
+def serve_frontend(full_path: str):
+    if full_path == "api" or full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
         file_path = _frontend_path(full_path)
         if file_path.is_file():
             return FileResponse(file_path)
-        
-        # Fall back to index.html for client-side routing
+        if full_path == "assets" or full_path.startswith("assets/"):
+            raise HTTPException(status_code=404, detail="Asset not found")
         index_path = _frontend_path("index.html")
-        if index_path.exists():
+        if index_path.is_file():
             return FileResponse(index_path)
-        
-        raise HTTPException(status_code=404, detail="Frontend not built")
+    except OSError:
+        raise HTTPException(status_code=404, detail="Frontend unavailable") from None
+    raise HTTPException(status_code=404, detail="Frontend not built")
