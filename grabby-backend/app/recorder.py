@@ -1,7 +1,11 @@
 import threading
 import logging
 import wave
-import os
+import audioop
+import subprocess
+import uuid
+from contextlib import ExitStack
+from itertools import zip_longest
 from datetime import datetime
 from pathlib import Path
 
@@ -23,8 +27,7 @@ class MeetingRecorder:
         self._lock = threading.Lock()
         self._recording = False
         self._thread: threading.Thread | None = None
-        self._loopback_frames: list[bytes] = []
-        self._mic_frames: list[bytes] = []
+        self._capture_dir: Path | None = None
         self._current_file: str | None = None
         self._started_at: datetime | None = None
         self._error: str | None = None
@@ -120,8 +123,8 @@ class MeetingRecorder:
             self._started_at = started_at
             self._current_file = filename
             self.notes_id = db.create_notes()["id"]
-            self._loopback_frames = []
-            self._mic_frames = []
+            self._capture_dir = RECORDINGS_DIR / f".capture-{uuid.uuid4().hex}"
+            self._capture_dir.mkdir()
             self._error = None
             self._recording = True
             self.live = LiveTranscript()
@@ -152,144 +155,142 @@ class MeetingRecorder:
 
     # ------------------------------------------------------------------
     def _record_loop(self):
-        p = pyaudio.PyAudio()
+        # Raw PCM avoids both unbounded RAM and WAV's 4 GiB capture limit.
+        p = None
+        streams = []
         try:
+            p = pyaudio.PyAudio()
             loopback_dev = self._get_loopback_device(p)
             mic_dev = self._get_default_mic(p)
-
             if loopback_dev is None:
-                self._error = "No WASAPI loopback device found"
-                self._recording = False
-                self.live.stop()
-                p.terminate()
-                return
+                raise RuntimeError("No WASAPI loopback device found")
 
-            # Use each device's NATIVE sample rate and channels
             self._lb_rate = int(loopback_dev["defaultSampleRate"])
             self._lb_channels = loopback_dev["maxInputChannels"]
             self._mic_rate = int(mic_dev["defaultSampleRate"])
             self._mic_channels = mic_dev["maxInputChannels"] or 1
 
-            log.info(
-                "Loopback: %s @ %d Hz, %d ch | Mic: %s @ %d Hz, %d ch",
-                loopback_dev["name"], self._lb_rate, self._lb_channels,
-                mic_dev["name"], self._mic_rate, self._mic_channels,
-            )
+            with ExitStack() as files:
+                for source, device, rate, channels, name in (
+                    ("others", loopback_dev, self._lb_rate, self._lb_channels, "loopback.pcm"),
+                    ("you", mic_dev, self._mic_rate, self._mic_channels, "mic.pcm"),
+                ):
+                    output = files.enter_context((self._capture_dir / name).open("wb"))
+                    stream = p.open(format=pyaudio.paInt16, channels=channels, rate=rate,
+                                    input=True, input_device_index=device["index"],
+                                    frames_per_buffer=1024)
+                    streams.append((stream, output, source, rate, channels))
 
-            loopback_stream = p.open(
-                format=pyaudio.paInt16,
-                channels=self._lb_channels,
-                rate=self._lb_rate,
-                input=True,
-                input_device_index=loopback_dev["index"],
-                frames_per_buffer=1024,
-            )
-
-            mic_stream = p.open(
-                format=pyaudio.paInt16,
-                channels=self._mic_channels,
-                rate=self._mic_rate,
-                input=True,
-                input_device_index=mic_dev["index"],
-                frames_per_buffer=1024,
-            )
+                while self._recording:
+                    for stream, output, source, rate, channels in streams:
+                        try:
+                            data = stream.read(1024, exception_on_overflow=False)
+                        except Exception:
+                            if not self._recording:
+                                break
+                            raise
+                        # Disk errors must stop capture, not silently drop audio.
+                        output.write(data)
+                        if self.live:
+                            self.live.feed(source, data, rate, channels)
         except Exception as exc:
-            log.exception("Failed to open audio streams")
-            self._error = f"Failed to open audio streams: {exc}"
+            log.exception("Audio capture failed")
+            self._error = f"Audio capture failed: {exc}"
             self._recording = False
-            self.live.stop()
-            p.terminate()
-            return
-
-        try:
-            while self._recording:
-                try:
-                    lb_data = loopback_stream.read(1024, exception_on_overflow=False)
-                    self._loopback_frames.append(lb_data)
-                    self.live.feed("others", lb_data, self._lb_rate, self._lb_channels)
-                except Exception:
-                    if not self._recording:
-                        break
-
-                try:
-                    mic_data = mic_stream.read(1024, exception_on_overflow=False)
-                    self._mic_frames.append(mic_data)
-                    self.live.feed("you", mic_data, self._mic_rate, self._mic_channels)
-                except Exception:
-                    if not self._recording:
-                        break
+            if self.live:
+                self.live.stop()
         finally:
-            loopback_stream.stop_stream()
-            loopback_stream.close()
-            mic_stream.stop_stream()
-            mic_stream.close()
-            p.terminate()
-            log.info(
-                "Recording stopped. Loopback frames: %d, Mic frames: %d",
-                len(self._loopback_frames), len(self._mic_frames),
-            )
+            for stream, *_ in streams:
+                try:
+                    stream.stop_stream()
+                except Exception:
+                    log.exception("Failed to stop audio stream")
+                try:
+                    stream.close()
+                except Exception:
+                    log.exception("Failed to close audio stream")
+            if p is not None:
+                try:
+                    p.terminate()
+                except Exception:
+                    log.exception("Failed to terminate audio capture")
 
-    # ------------------------------------------------------------------
-    def _mix_and_save(self) -> str:
-        RECORDINGS_DIR.mkdir(exist_ok=True)
+    @staticmethod
+    def _pcm_chunks(path: Path, rate: int, channels: int, target_rate: int,
+                    target_channels: int):
+        """Yield aligned PCM blocks, preserving resampler state across reads."""
+        block_bytes = 4096 * target_channels * 2
+        pending = bytearray()
+        state = None
+        with path.open("rb") as source:
+            while data := source.read(4096 * channels * 2):
+                if rate != target_rate:
+                    data, state = audioop.ratecv(data, 2, channels, rate, target_rate, state)
+                if channels != target_channels:
+                    segment = AudioSegment(data=data, sample_width=2, frame_rate=target_rate,
+                                           channels=channels)
+                    # Pydub supports mono <-> multichannel; bridge other layouts via mono.
+                    if channels != 1 and target_channels != 1:
+                        segment = segment.set_channels(1)
+                    data = segment.set_channels(target_channels).raw_data
+                pending.extend(data)
+                while len(pending) >= block_bytes:
+                    yield bytes(pending[:block_bytes])
+                    del pending[:block_bytes]
+            if pending:
+                yield bytes(pending)
 
-        temp_lb = RECORDINGS_DIR / "_temp_loopback.wav"
-        temp_mic = RECORDINGS_DIR / "_temp_mic.wav"
+    def _mix_to_wav(self, output: Path):
+        system = self._pcm_chunks(self._capture_dir / "loopback.pcm", self._lb_rate,
+                                  self._lb_channels, self._lb_rate, self._lb_channels)
+        mic = self._pcm_chunks(self._capture_dir / "mic.pcm", self._mic_rate,
+                               self._mic_channels, self._lb_rate, self._lb_channels)
+        try:
+            with wave.open(str(output), "wb") as mixed:
+                mixed.setnchannels(self._lb_channels)
+                mixed.setsampwidth(2)
+                mixed.setframerate(self._lb_rate)
+                for system_data, mic_data in zip_longest(system, mic, fillvalue=b""):
+                    size = max(len(system_data), len(mic_data))
+                    mixed.writeframesraw(audioop.add(system_data.ljust(size, b"\0"),
+                                                     mic_data.ljust(size, b"\0"), 2))
+        finally:
+            system.close()
+            mic.close()
 
-        log.info(
-            "Saving: lb_frames=%d (rate=%d, ch=%d), mic_frames=%d (rate=%d, ch=%d)",
-            len(self._loopback_frames), self._lb_rate, self._lb_channels,
-            len(self._mic_frames), self._mic_rate, self._mic_channels,
+    def _export_mp3(self, source: Path, output: Path):
+        # Never use AudioSegment.from_wav/export here: they load the whole meeting.
+        subprocess.run(
+            [AudioSegment.converter, "-nostdin", "-y", "-loglevel", "error",
+             "-i", str(source), "-b:a", "128k", str(output)],
+            check=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
-        # Save loopback WAV at its native rate/channels
-        with wave.open(str(temp_lb), "wb") as wf:
-            wf.setnchannels(self._lb_channels)
-            wf.setsampwidth(2)
-            wf.setframerate(self._lb_rate)
-            wf.writeframes(b"".join(self._loopback_frames))
-
-        # Save mic WAV at its native rate/channels
-        with wave.open(str(temp_mic), "wb") as wf:
-            wf.setnchannels(self._mic_channels)
-            wf.setsampwidth(2)
-            wf.setframerate(self._mic_rate)
-            wf.writeframes(b"".join(self._mic_frames))
-
-        # Load with pydub (it handles sample-rate via ffmpeg)
-        system_audio = AudioSegment.from_wav(str(temp_lb))
-        mic_audio = AudioSegment.from_wav(str(temp_mic))
-
-        # Normalize both to same sample rate (use loopback rate as target)
-        if mic_audio.frame_rate != system_audio.frame_rate:
-            mic_audio = mic_audio.set_frame_rate(system_audio.frame_rate)
-
-        # Match channel counts
-        if mic_audio.channels != system_audio.channels:
-            mic_audio = mic_audio.set_channels(system_audio.channels)
-
-        # Overlay mic on system audio (use the longer as base)
-        if len(system_audio) >= len(mic_audio):
-            mixed = system_audio.overlay(mic_audio)
-        else:
-            mixed = mic_audio.overlay(system_audio)
-
-        # Try MP3 (needs ffmpeg), fall back to WAV
+    def _mix_and_save(self) -> str:
+        if self._capture_dir is None:
+            raise RuntimeError("No captured audio to save")
+        # Keep intermediate and incomplete exports out of the recordings listing.
+        mixed_wav = self._capture_dir / "mixed.wav"
+        encoded_mp3 = self._capture_dir / "mixed.mp3"
+        self._mix_to_wav(mixed_wav)
         try:
-            output_file = RECORDINGS_DIR / f"{self._current_file}.mp3"
-            mixed.export(str(output_file), format="mp3", bitrate="128k")
-        except Exception:
+            self._export_mp3(mixed_wav, encoded_mp3)
+        except (OSError, subprocess.SubprocessError):
+            log.warning("MP3 export unavailable; keeping WAV", exc_info=True)
             output_file = RECORDINGS_DIR / f"{self._current_file}.wav"
-            mixed.export(str(output_file), format="wav")
-
-        # Cleanup temp files
-        temp_lb.unlink(missing_ok=True)
-        temp_mic.unlink(missing_ok=True)
-
-        self._loopback_frames.clear()
-        self._mic_frames.clear()
+            mixed_wav.replace(output_file)
+        else:
+            output_file = RECORDINGS_DIR / f"{self._current_file}.mp3"
+            encoded_mp3.replace(output_file)
 
         db.attach_notes(self.notes_id, output_file.name)
+        # Preserve captured PCM on failures so the audio can be recovered.
+        for name in ("loopback.pcm", "mic.pcm", "mixed.wav", "mixed.mp3"):
+            (self._capture_dir / name).unlink(missing_ok=True)
+        self._capture_dir.rmdir()
+        self._capture_dir = None
         return str(output_file)
 
 

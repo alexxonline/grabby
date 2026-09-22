@@ -3,7 +3,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from app import database as db
@@ -42,18 +42,15 @@ class NotesTests(unittest.TestCase):
                     self.assertEqual(main.get_status().notes_id, recorder.notes_id)
                 note = "Decisions\n• Follow up with José"
                 main.update_notes(recorder.notes_id, main.UpdateTranscriptionRequest(text=note))
-                mixed = MagicMock()
-                mixed.frame_rate = 48000
-                mixed.channels = 2
-                mixed.overlay.return_value = mixed
+                (recorder._capture_dir / "loopback.pcm").write_bytes(b"\0" * 4096)
+                (recorder._capture_dir / "mic.pcm").write_bytes(b"\0" * 2048)
 
-                def export(path, **kwargs):
-                    if fallback and kwargs["format"] == "mp3":
-                        raise RuntimeError("ffmpeg unavailable")
-                    Path(path).write_bytes(b"audio")
+                def export(source, output):
+                    if fallback:
+                        raise FileNotFoundError("ffmpeg unavailable")
+                    output.write_bytes(b"audio")
 
-                mixed.export.side_effect = export
-                with patch("app.recorder.AudioSegment.from_wav", return_value=mixed):
+                with patch.object(recorder, "_export_mp3", side_effect=export):
                     filename = Path(recorder._mix_and_save()).name
                 self.assertTrue(filename.endswith(".wav" if fallback else ".mp3"))
                 self.assertEqual(main.get_recording_notes(filename), {"id": recorder.notes_id, "text": note})
