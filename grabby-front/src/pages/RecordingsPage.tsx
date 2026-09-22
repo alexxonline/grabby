@@ -33,6 +33,17 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
     fetchRecordings();
   }, []);
 
+  useEffect(() => {
+    if (!recordings.some(rec => rec.processing)) return;
+    const timer = window.setInterval(() => {
+      api.listRecordings().then(data => {
+        setRecordings(data);
+        setPlayingRec(current => current && data.find(rec => rec.filename === current.filename && rec.audio_available) || null);
+      }).catch(e => setError(e.message));
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [recordings]);
+
   // Load transcription status for all recordings
   useEffect(() => {
     recordings.forEach((rec) => {
@@ -78,6 +89,7 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
     try {
       const status = await api.transcribeRecording(rec.filename);
       setTranscriptions((prev) => ({ ...prev, [rec.filename]: status }));
+      await fetchRecordings();
 
       if (status.status === "completed") {
         route(`/transcription/${encodeURIComponent(rec.filename)}`);
@@ -91,6 +103,7 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
     if (!confirm(`Delete "${filename}"?`)) return;
     try {
       await api.deleteRecording(filename);
+      setPlayingRec(current => current?.filename === filename ? null : current);
       setRecordings((prev) => prev.filter((r) => r.filename !== filename));
     } catch (e: any) {
       setError(e.message);
@@ -181,17 +194,17 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
                 <div class="recording-meta">
                   <span>{formatDate(rec.created_at)}</span>
                   <span class="sep">•</span>
-                  <span>{formatSize(rec.size_bytes)}</span>
+                  <span>{rec.audio_available ? formatSize(rec.size_bytes) : "Transcript only"}</span>
                 </div>
               </div>
               <div class="recording-actions">
-                <button
+                {rec.audio_available && <button
                   class={`btn btn-sm btn-play${playingRec?.filename === rec.filename ? " active" : ""}`}
                   onClick={() => setPlayingRec(playingRec?.filename === rec.filename ? null : rec)}
                   title={playingRec?.filename === rec.filename ? "Stop" : "Play"}
                 >
                   {playingRec?.filename === rec.filename ? "⏹" : "▶"}
-                </button>
+                </button>}
                 {(() => {
                   const ts = transcriptions[rec.filename];
                   if (ts?.status === "pending") {
@@ -233,28 +246,31 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
                     </button>
                   );
                 })()}
-                <a
+                {rec.audio_available && <a
                   class="btn btn-sm btn-download"
                   href={api.downloadUrl(rec.filename)}
                   download
                 >
                   Download
-                </a>
+                </a>}
                 <button
                   class="btn btn-sm btn-rename"
                   onClick={() => handleRenameStart(rec)}
-                  disabled={editingFile === rec.filename}
+                  disabled={editingFile === rec.filename || rec.processing}
                 >
                   Rename
                 </button>
                 <button
                   class="btn btn-sm btn-delete"
                   onClick={() => handleDelete(rec.filename)}
+                  disabled={rec.processing}
                 >
                   Delete
                 </button>
               </div>
               </div>{/* end recording-row */}
+              {rec.processing && <p class="recording-meta">Processing recording…</p>}
+              {rec.processing_error && <p class="error">{rec.processing_error}</p>}
             </div>
           ))}
         </div>

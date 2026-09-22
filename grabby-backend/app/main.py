@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -11,8 +12,9 @@ from pydantic import BaseModel
 from .recorder import recorder, RECORDINGS_DIR
 from . import database as db
 from .transcription import transcribe_file
+from .titles import suggest_title, MODEL
 
-load_dotenv()  # reads .env from CWD (grabby-backend/)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 app = FastAPI(title="Grabby – Meeting Recorder")
 
@@ -29,6 +31,11 @@ app.add_middleware(
 
 # ----- Schemas -----
 
+class SettingsUpdate(BaseModel):
+    auto_delete_audio: bool
+    auto_title: bool
+
+
 class StartRequest(BaseModel):
     name: str | None = None
 
@@ -44,6 +51,9 @@ class RecordingInfo(BaseModel):
     filename: str
     name: str
     size_bytes: int
+    audio_available: bool = True
+    processing_error: str | None = None
+    processing: bool = False
     created_at: str
 
 
@@ -60,6 +70,7 @@ class TranscriptionOut(BaseModel):
 
 class TranscriptionStatus(BaseModel):
     filename: str
+    title: str | None = None
     status: str  # "pending" | "completed" | "error"
     text: str | None = None
     language: str | None = None
@@ -68,6 +79,7 @@ class TranscriptionStatus(BaseModel):
 
 class SearchResult(BaseModel):
     filename: str
+    title: str | None = None
     snippet: str
     language: str | None = None
 
@@ -82,6 +94,48 @@ _transcribe_errors: dict[str, str] = {}  # filename -> error message
 
 
 # ----- Endpoints -----
+
+@app.get("/api/settings")
+def get_settings():
+    return {**db.get_settings(), "openrouter_configured": bool(os.getenv("OPENROUTER_API_KEY", "").strip()),
+            "title_model": MODEL}
+
+
+@app.put("/api/settings")
+def update_settings(body: SettingsUpdate):
+    db.save_settings(body.model_dump())
+    return get_settings()
+
+
+def _recording_path(filename: str) -> Path:
+    if Path(filename).name != filename or any(c in filename for c in '/\\:') or filename in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid recording filename")
+    return RECORDINGS_DIR / filename
+
+
+def _recording_info(filename: str) -> RecordingInfo:
+    filepath = _recording_path(filename)
+    try:
+        stat = filepath.stat() if filepath.is_file() else None
+    except FileNotFoundError:
+        # Automatic cleanup may finish while the recordings list is loading.
+        stat = None
+    transcript = db.get_transcription(filename)
+    if stat is None and transcript is None:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    created_at = datetime.fromtimestamp(stat.st_mtime).isoformat() if stat else transcript["created_at"]
+    db.ensure_metadata(filename, created_at)
+    metadata = db.get_metadata(filename)
+    return RecordingInfo(filename=filename, name=metadata.get("title") or filepath.stem,
+                         size_bytes=stat.st_size if stat else 0, audio_available=stat is not None,
+                         created_at=metadata["created_at"], processing_error=metadata.get("processing_error"),
+                         processing=_transcribing.get(filename) == "pending")
+
+
+def _require_idle(filename: str):
+    if _transcribing.get(filename) == "pending" or (recorder.is_recording and Path(filename).stem == recorder.current_file):
+        raise HTTPException(status_code=409, detail="Wait until recording and processing finish.")
+
 
 @app.get("/api/status", response_model=RecordingStatus)
 def get_status():
@@ -122,69 +176,38 @@ def stop_recording(background_tasks: BackgroundTasks):
 @app.get("/api/recordings", response_model=list[RecordingInfo])
 def list_recordings():
     RECORDINGS_DIR.mkdir(exist_ok=True)
-    recordings: list[RecordingInfo] = []
-    for ext in ("*.mp3", "*.wav"):
-        for f in RECORDINGS_DIR.glob(ext):
-            stat = f.stat()
-            recordings.append(
-                RecordingInfo(
-                    filename=f.name,
-                    name=f.stem,
-                    size_bytes=stat.st_size,
-                    created_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                )
-            )
-    recordings.sort(key=lambda r: r.created_at, reverse=True)
-    return recordings
+    filenames = {f.name for ext in ("*.mp3", "*.wav") for f in RECORDINGS_DIR.glob(ext)}
+    filenames.update(row["filename"] for row in db.list_transcriptions())
+    recordings = [_recording_info(filename) for filename in filenames]
+    return sorted(recordings, key=lambda r: r.created_at, reverse=True)
 
 
 @app.delete("/api/recordings/{filename}")
 def delete_recording(filename: str):
-    filepath = RECORDINGS_DIR / filename
-    if not filepath.exists() or not filepath.is_file():
-        raise HTTPException(status_code=404, detail="Recording not found")
-    filepath.unlink()
+    _require_idle(filename)
+    _recording_info(filename)
+    _recording_path(filename).unlink(missing_ok=True)
     db.delete_transcription(filename)
+    db.delete_metadata(filename)
+    _transcribing.pop(filename, None)
+    _transcribe_errors.pop(filename, None)
     return {"detail": "deleted"}
 
 
 @app.patch("/api/recordings/{filename}", response_model=RecordingInfo)
 def rename_recording(filename: str, body: RenameRequest):
-    filepath = RECORDINGS_DIR / filename
-    if not filepath.exists() or not filepath.is_file():
-        raise HTTPException(status_code=404, detail="Recording not found")
-
-    new_name = body.new_name.strip()
-    if not new_name:
-        raise HTTPException(status_code=400, detail="Name cannot be empty")
-
-    ext = filepath.suffix  # preserve original .mp3 or .wav
-    stem = new_name.removesuffix(ext) if new_name.endswith(ext) else new_name
-
-    # Avoid filename collision: append _1, _2, … if needed
-    candidate = stem
-    counter = 1
-    while True:
-        new_path = RECORDINGS_DIR / f"{candidate}{ext}"
-        if not new_path.exists() or new_path == filepath:
-            break
-        candidate = f"{stem}_{counter}"
-        counter += 1
-
-    filepath.rename(new_path)
-    db.rename_transcription(filename, new_path.name)
-    stat = new_path.stat()
-    return RecordingInfo(
-        filename=new_path.name,
-        name=new_path.stem,
-        size_bytes=stat.st_size,
-        created_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
-    )
+    _require_idle(filename)
+    _recording_info(filename)
+    title = body.new_name.strip()
+    if not title or len(title) > 160:
+        raise HTTPException(status_code=400, detail="Title must contain 1 to 160 characters")
+    db.set_title(filename, title)
+    return _recording_info(filename)
 
 
 @app.get("/api/recordings/{filename}/download")
 def download_recording(filename: str):
-    filepath = RECORDINGS_DIR / filename
+    filepath = _recording_path(filename)
     if not filepath.exists() or not filepath.is_file():
         raise HTTPException(status_code=404, detail="Recording not found")
     media = "audio/mpeg" if filepath.suffix == ".mp3" else "audio/wav"
@@ -194,22 +217,37 @@ def download_recording(filename: str):
 # ----- Transcription Endpoints -----
 
 def _do_transcribe(filename: str):
-    """Background task: transcribe file and save to DB."""
-    filepath = RECORDINGS_DIR / filename
+    """Save the transcript before any destructive audio cleanup."""
+    filepath = _recording_path(filename)
+    settings = db.get_settings()
     try:
+        _recording_info(filename)
+        db.set_processing_error(filename, None)
         result = transcribe_file(filepath)
         db.save_transcription(filename, result["text"], result.get("language"))
-        _transcribing[filename] = "completed"
     except Exception as exc:
         _transcribing[filename] = "error"
         _transcribe_errors[filename] = str(exc)
+        return
+
+    errors = []
+    if settings["auto_delete_audio"]:
+        try:
+            filepath.unlink(missing_ok=True)
+        except OSError:
+            errors.append("Transcript saved, but audio could not be deleted. You can remove it manually.")
+    if settings["auto_title"]:
+        try:
+            db.set_title(filename, suggest_title(result["text"]))
+        except Exception as exc:
+            errors.append(str(exc))
+    db.set_processing_error(filename, " ".join(errors) or None)
+    _transcribing[filename] = "completed"
 
 
 @app.post("/api/recordings/{filename}/transcribe", response_model=TranscriptionStatus)
 def start_transcription(filename: str, background_tasks: BackgroundTasks):
-    filepath = RECORDINGS_DIR / filename
-    if not filepath.exists() or not filepath.is_file():
-        raise HTTPException(status_code=404, detail="Recording not found")
+    filepath = _recording_path(filename)
 
     # If already transcribed, return it
     existing = db.get_transcription(filename)
@@ -225,6 +263,9 @@ def start_transcription(filename: str, background_tasks: BackgroundTasks):
     if _transcribing.get(filename) == "pending":
         return TranscriptionStatus(filename=filename, status="pending")
 
+    if not filepath.is_file():
+        raise HTTPException(status_code=404, detail="Audio not found")
+
     # Launch background transcription
     _transcribing[filename] = "pending"
     _transcribe_errors.pop(filename, None)
@@ -239,6 +280,7 @@ def get_transcription(filename: str):
     if existing:
         return TranscriptionStatus(
             filename=filename,
+            title=db.get_metadata(filename).get("title"),
             status="completed",
             text=existing["text"],
             language=existing.get("language"),
@@ -282,6 +324,7 @@ def search_transcriptions(q: str):
     return [
         SearchResult(
             filename=r["filename"],
+            title=db.get_metadata(r["filename"]).get("title"),
             snippet=r["snippet"],
             language=r.get("language"),
         )

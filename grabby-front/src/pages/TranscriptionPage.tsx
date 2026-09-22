@@ -194,7 +194,7 @@ export function TranscriptionPage({
         <button class="btn btn-sm btn-cancel" onClick={() => route("/recordings")}>
           ← Back
         </button>
-        <h1>Transcript: {decodedName}</h1>
+        <h1>Transcript: {transcription.title || decodedName}</h1>
         <button class="btn btn-sm btn-copy" onClick={copyToClipboard}>
           {copied ? "✓ Copied" : "📋 Copy"}
         </button>

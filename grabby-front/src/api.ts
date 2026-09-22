@@ -17,10 +17,21 @@ export interface RecordingInfo {
   name: string;
   size_bytes: number;
   created_at: string;
+  audio_available: boolean;
+  processing: boolean;
+  processing_error: string | null;
+}
+
+export interface Settings {
+  auto_delete_audio: boolean;
+  auto_title: boolean;
+  openrouter_configured: boolean;
+  title_model: string;
 }
 
 export interface TranscriptionStatus {
   filename: string;
+  title?: string | null;
   status: "none" | "pending" | "completed" | "error";
   text?: string | null;
   language?: string | null;
@@ -29,6 +40,7 @@ export interface TranscriptionStatus {
 
 export interface SearchResult {
   filename: string;
+  title?: string | null;
   snippet: string;
   language?: string | null;
 }
@@ -46,6 +58,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getSettings: () => request<Settings>("/settings"),
+  updateSettings: (settings: Pick<Settings, "auto_delete_audio" | "auto_title">) =>
+    request<Settings>("/settings", { method: "PUT", body: JSON.stringify(settings) }),
   getStatus: () => request<RecordingStatus>("/status"),
 
   startRecording: (name?: string) =>

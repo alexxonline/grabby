@@ -8,6 +8,7 @@ from pathlib import Path
 import pyaudiowpatch as pyaudio
 from pydub import AudioSegment
 from .realtime import LiveTranscript
+from . import database as db
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +85,8 @@ class MeetingRecorder:
         """If a file with this stem already exists in RECORDINGS_DIR, append _1, _2, … until unique."""
         candidate = stem
         counter = 1
-        while any(RECORDINGS_DIR.glob(f"{candidate}.*")):
+        while (any(RECORDINGS_DIR.glob(f"{candidate}.*"))
+               or any(db.get_transcription(f"{candidate}{ext}") for ext in (".mp3", ".wav"))):
             candidate = f"{stem}_{counter}"
             counter += 1
         return candidate

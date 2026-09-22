@@ -24,6 +24,16 @@ def init_db() -> None:
     """Create tables and FTS virtual table if they don't exist."""
     conn = _get_conn()
     conn.executescript("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS recording_metadata (
+            filename TEXT PRIMARY KEY,
+            title TEXT,
+            created_at TEXT NOT NULL,
+            processing_error TEXT
+        );
         CREATE TABLE IF NOT EXISTS transcriptions (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             filename    TEXT NOT NULL UNIQUE,
@@ -128,3 +138,54 @@ def update_transcription_text(filename: str, text: str) -> bool:
     )
     conn.commit()
     return cur.rowcount > 0
+
+
+def get_settings() -> dict:
+    values = {"auto_delete_audio": False, "auto_title": False}
+    for row in _get_conn().execute("SELECT key, value FROM settings"):
+        if row["key"] in values:
+            values[row["key"]] = bool(row["value"])
+    return values
+
+
+def save_settings(values: dict) -> dict:
+    conn = _get_conn()
+    with conn:
+        conn.executemany("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                         [(key, int(value)) for key, value in values.items()])
+    return get_settings()
+
+
+def list_transcriptions() -> list[dict]:
+    return [dict(row) for row in _get_conn().execute(
+        "SELECT filename, created_at FROM transcriptions")]
+
+
+def ensure_metadata(filename: str, created_at: str) -> None:
+    conn = _get_conn()
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO recording_metadata (filename, created_at) VALUES (?, ?)",
+                     (filename, created_at))
+
+
+def get_metadata(filename: str) -> dict:
+    row = _get_conn().execute("SELECT * FROM recording_metadata WHERE filename = ?", (filename,)).fetchone()
+    return dict(row) if row else {}
+
+
+def set_title(filename: str, title: str) -> None:
+    conn = _get_conn()
+    with conn:
+        conn.execute("UPDATE recording_metadata SET title = ? WHERE filename = ?", (title, filename))
+
+
+def set_processing_error(filename: str, error: str | None) -> None:
+    conn = _get_conn()
+    with conn:
+        conn.execute("UPDATE recording_metadata SET processing_error = ? WHERE filename = ?", (error, filename))
+
+
+def delete_metadata(filename: str) -> None:
+    conn = _get_conn()
+    with conn:
+        conn.execute("DELETE FROM recording_metadata WHERE filename = ?", (filename,))

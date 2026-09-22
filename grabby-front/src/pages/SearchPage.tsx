@@ -62,7 +62,7 @@ export function SearchPage(_props: Props) {
           {results.map((r) => (
             <li key={r.filename} class="search-result-item">
               <a href={`/transcription/${encodeURIComponent(r.filename)}`} class="search-result-link">
-                <span class="search-result-name">{r.filename.replace(/\.[^.]+$/, "")}</span>
+                <span class="search-result-name">{r.title || r.filename.replace(/\.[^.]+$/, "")}</span>
                 <span
                   class="search-result-snippet"
                   dangerouslySetInnerHTML={{ __html: r.snippet.replace(/\*\*(.*?)\*\*/g, "<mark>$1</mark>") }}

@@ -64,6 +64,8 @@ Create `grabby-backend/.env` with:
 
 ```env
 ELEVENLABS_API_KEY=your_key_here
+# Optional, for automatic titles
+OPENROUTER_API_KEY=your_openrouter_key_here
 ```
 
 ### Run backend
@@ -129,3 +131,14 @@ When `grabby-front/dist` exists, FastAPI serves the SPA and assets.
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
+
+## Recording settings
+
+Open **Settings** to enable either option (both are off by default and persist in SQLite):
+
+- **Auto-delete audio:** removes the audio only after a successful transcription has been saved. Transcript-only entries stay in Recordings and Search and can be renamed or deleted. Failed transcription keeps the audio for retry. Existing recordings are not purged when you switch this on.
+- **Auto title:** sends up to 24,000 characters of transcript text to OpenRouter using `openai/gpt-5.6-luna` and applies an editable display title. Recording identifiers and transcript links stay stable. Missing keys or provider failures keep the original title and show an error on the recording.
+
+Set `OPENROUTER_API_KEY` in `grabby-backend/.env` and restart the backend. The key is never sent to the frontend. Settings apply when a transcription job begins. Rename now changes the display title rather than the underlying audio filename.
+
+Settings API: `GET /api/settings`, `PUT /api/settings` with `auto_delete_audio` and `auto_title` booleans.

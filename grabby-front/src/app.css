@@ -726,3 +726,20 @@
   padding: 0 2px;
 }
 
+
+/* Settings */
+.settings-intro { color: var(--text-muted); line-height: 1.6; margin-bottom: 1.5rem; }
+.settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 0 1.5rem; }
+.setting-row { display: flex; gap: 1.5rem; align-items: flex-start; padding: 1.5rem 0; }
+.setting-row + .setting-row { border-top: 1px solid var(--border); }
+.setting-row > div { flex: 1; min-width: 0; }
+.setting-row label { font-weight: 600; cursor: pointer; }
+.setting-row p { color: var(--text-muted); font-size: .9rem; line-height: 1.6; margin: .5rem 0 0; overflow-wrap: anywhere; }
+.setting-row .settings-hint { color: var(--text); }
+.setting-toggle { appearance: none; width: 44px; height: 26px; border-radius: 16px; background: var(--border); cursor: pointer; flex-shrink: 0; position: relative; margin-top: 2px; }
+.setting-toggle::after { content: ''; position: absolute; width: 18px; height: 18px; top: 4px; left: 4px; border-radius: 50%; background: white; transition: transform .15s; }
+.setting-toggle:checked { background: var(--primary); }
+.setting-toggle:checked::after { transform: translateX(18px); }
+.setting-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.setting-toggle:disabled { opacity: .5; cursor: wait; }
+@media (max-width: 480px) { .navbar { padding: .75rem 1rem; flex-wrap: wrap; gap: .75rem; } .nav-links { gap: 1rem; } }
