@@ -52,6 +52,19 @@ class MeetingRecorder:
     def started_at(self) -> datetime | None:
         return self._started_at
 
+    @property
+    def error(self) -> str | None:
+        return self._error
+
+    def _capture_failed(self, exc: Exception):
+        self._error = f"Audio capture failed: {exc}"
+        self._recording = False
+        if self.live:
+            try:
+                self.live.stop()
+            except Exception:
+                log.exception("Failed to stop live transcription after capture failure")
+
     # ------------------------------------------------------------------
     def _get_loopback_device(self, p: pyaudio.PyAudio):
         """Find a WASAPI loopback device."""
@@ -127,16 +140,22 @@ class MeetingRecorder:
             self._capture_dir.mkdir()
             self._error = None
             self._recording = True
-            self.live = LiveTranscript()
-            self.live.start()
-
-        self._thread = threading.Thread(target=self._record_loop, daemon=True)
-        self._thread.start()
+            self.live = None
+            try:
+                self.live = LiveTranscript()
+                self.live.start()
+                # Publish and start the thread before Stop can acquire the lock.
+                self._thread = threading.Thread(target=self._record_loop, daemon=True)
+                self._thread.start()
+            except Exception as exc:
+                log.exception("Failed to start audio capture")
+                self._capture_failed(exc)
+                raise RuntimeError(self._error) from exc
 
     def stop(self) -> str:
         with self._lock:
             if not self._recording:
-                raise RuntimeError("Not recording")
+                raise RuntimeError(self._error or "Not recording")
             self._recording = False
             self._saving = True
             if self.live:
@@ -195,10 +214,7 @@ class MeetingRecorder:
                             self.live.feed(source, data, rate, channels)
         except Exception as exc:
             log.exception("Audio capture failed")
-            self._error = f"Audio capture failed: {exc}"
-            self._recording = False
-            if self.live:
-                self.live.stop()
+            self._capture_failed(exc)
         finally:
             for stream, *_ in streams:
                 try:

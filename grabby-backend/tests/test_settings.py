@@ -103,6 +103,47 @@ class SettingsProcessingTests(unittest.TestCase):
         self.assertFalse(rec.audio_available)
         self.assertEqual(main.get_transcription(self.audio.name).status, 'completed')
 
+    def test_settings_failure_finishes_job_and_allows_retry(self):
+        filename = self.audio.name
+        main._transcribing[filename] = 'pending'
+        with patch.object(db, 'get_settings', side_effect=RuntimeError('database unavailable')), \
+                self.assertLogs('app.main', level='ERROR'):
+            main._do_transcribe(filename)
+        self.assertEqual(main._transcribing[filename], 'error')
+        self.assertEqual(main.get_transcription(filename).error, 'database unavailable')
+        self.assertTrue(self.audio.exists())
+        self.assertFalse(main.list_recordings()[0].processing)
+        main.rename_recording(filename, main.RenameRequest(new_name='Retry meeting'))
+        tasks = BackgroundTasks()
+        self.assertEqual(main.start_transcription(filename, tasks).status, 'pending')
+        self.assertEqual(len(tasks.tasks), 1)
+        self.process()
+        self.assertEqual(main._transcribing[filename], 'completed')
+        self.assertNotIn(filename, main._transcribe_errors)
+        self.assertIsNone(main.list_recordings()[0].processing_error)
+
+    def test_final_error_write_failure_keeps_saved_transcript_and_unlocks_recording(self):
+        original = db.set_processing_error
+
+        def fail_final_write(filename, error):
+            if db.get_transcription(filename):
+                raise RuntimeError('database write failed')
+            original(filename, error)
+
+        with patch.object(db, 'set_processing_error', side_effect=fail_final_write), \
+                patch.object(main, 'suggest_title', side_effect=RuntimeError('title unavailable')), \
+                self.assertLogs('app.main', level='ERROR'):
+            self.process(auto_title=True)
+        filename = self.audio.name
+        self.assertEqual(main._transcribing[filename], 'completed')
+        self.assertEqual(main.get_transcription(filename).status, 'completed')
+        info = main.list_recordings()[0]
+        self.assertFalse(info.processing)
+        self.assertIn('title unavailable', info.processing_error)
+        self.assertIn('database write failed', info.processing_error)
+        main.delete_recording(filename)
+        self.assertEqual(main.list_recordings(), [])
+
     def test_pending_recording_cannot_be_deleted_or_renamed(self):
         main._transcribing[self.audio.name] = 'pending'
         for action in (lambda: main.delete_recording(self.audio.name),

@@ -137,7 +137,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
           </button>
         </div>
 
-        {error && <p class="error">{error}</p>}
+        {(error || status.error) && <p class="error" role="alert">{error || status.error}</p>}
         {liveError && <p class="error">Cannot reach the recorder. Reconnecting…</p>}
         {savedFile && !status.recording && (
           <p>Recording saved. The final transcript with speaker diarization is processing.

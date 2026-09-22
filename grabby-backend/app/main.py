@@ -89,6 +89,7 @@ class StartRequest(BaseModel):
 
 class RecordingStatus(BaseModel):
     recording: bool
+    error: str | None = None
     filename: str | None = None
     started_at: str | None = None
     live: dict | None = None
@@ -184,7 +185,7 @@ def _recording_info(filename: str) -> RecordingInfo:
     metadata = db.get_metadata(filename)
     return RecordingInfo(filename=filename, name=metadata.get("title") or filepath.stem,
                          size_bytes=stat.st_size if stat else 0, audio_available=stat is not None,
-                         created_at=metadata["created_at"], processing_error=metadata.get("processing_error"),
+                         created_at=metadata["created_at"], processing_error=metadata.get("processing_error") or _transcribe_errors.get(filename),
                          processing=_transcribing.get(filename) == "pending")
 
 
@@ -197,6 +198,7 @@ def _require_idle(filename: str):
 def get_status():
     return RecordingStatus(
         recording=recorder.is_recording,
+        error=recorder.error,
         notes_id=recorder.notes_id,
         filename=recorder.current_file,
         started_at=recorder.started_at.isoformat() if recorder.started_at else None,
@@ -213,12 +215,7 @@ def start_recording(body: StartRequest | None = None):
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return RecordingStatus(
-        recording=True,
-        notes_id=recorder.notes_id,
-        filename=recorder.current_file,
-        started_at=recorder.started_at.isoformat() if recorder.started_at else None,
-    )
+    return get_status()
 
 
 @app.post("/api/stop", response_model=RecordingStatus)
@@ -299,31 +296,39 @@ def download_recording(filename: str):
 
 def _do_transcribe(filename: str):
     """Save the transcript before any destructive audio cleanup."""
-    filepath = _recording_path(filename)
-    settings = db.get_settings()
+    transcript_saved = False
+    errors = []
     try:
+        filepath = _recording_path(filename)
+        settings = db.get_settings()
         _recording_info(filename)
         db.set_processing_error(filename, None)
         result = transcribe_file(filepath)
         db.save_transcription(filename, result["text"], result.get("language"))
-    except Exception as exc:
-        _transcribing[filename] = "error"
-        _transcribe_errors[filename] = str(exc)
-        return
+        transcript_saved = True
 
-    errors = []
-    if settings["auto_delete_audio"]:
-        try:
-            filepath.unlink(missing_ok=True)
-        except OSError:
-            errors.append("Transcript saved, but audio could not be deleted. You can remove it manually.")
-    if settings["auto_title"]:
-        try:
-            db.set_title(filename, suggest_title(result["text"]))
-        except Exception as exc:
-            errors.append(str(exc))
-    db.set_processing_error(filename, " ".join(errors) or None)
-    _transcribing[filename] = "completed"
+        if settings["auto_delete_audio"]:
+            try:
+                filepath.unlink(missing_ok=True)
+            except OSError:
+                errors.append("Transcript saved, but audio could not be deleted. You can remove it manually.")
+        if settings["auto_title"]:
+            try:
+                db.set_title(filename, suggest_title(result["text"]))
+            except Exception as exc:
+                errors.append(str(exc))
+        db.set_processing_error(filename, " ".join(errors) or None)
+    except Exception as exc:
+        log.exception("Recording processing failed for %s", filename)
+        prefix = "Transcript saved, but post-processing failed: " if transcript_saved else ""
+        errors.append(prefix + (str(exc) or type(exc).__name__))
+    finally:
+        # Finalize in memory even if the database cannot store the failure.
+        if errors:
+            _transcribe_errors[filename] = " ".join(errors)
+        else:
+            _transcribe_errors.pop(filename, None)
+        _transcribing[filename] = "completed" if transcript_saved else "error"
 
 
 @app.post("/api/recordings/{filename}/transcribe", response_model=TranscriptionStatus)

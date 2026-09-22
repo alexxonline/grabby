@@ -2,6 +2,7 @@ const API_BASE = "http://localhost:8000/api";
 
 export interface RecordingStatus {
   recording: boolean;
+  error?: string | null;
   filename: string | null;
   started_at: string | null;
   notes_id?: string | null;
