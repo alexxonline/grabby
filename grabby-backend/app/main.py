@@ -154,6 +154,8 @@ def start_recording(body: StartRequest | None = None):
     try:
         name = body.name if body else None
         recorder.start(filename=name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return RecordingStatus(
@@ -360,6 +362,18 @@ def search_transcriptions(q: str):
 
 FRONTEND_DIST = Path(__file__).parent.parent.parent / "grabby-front" / "dist"
 
+
+def _frontend_path(full_path: str) -> Path:
+    root = FRONTEND_DIST.resolve()
+    try:
+        candidate = (root / full_path).resolve()
+        if not candidate.is_relative_to(root):
+            raise ValueError("Path outside frontend")
+    except (OSError, ValueError, RuntimeError):
+        raise HTTPException(status_code=404, detail="Not found") from None
+    return candidate
+
+
 # Mount static assets (JS, CSS, etc.)
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
@@ -372,12 +386,12 @@ if FRONTEND_DIST.exists():
             raise HTTPException(status_code=404, detail="Not found")
         
         # Try to serve the requested file
-        file_path = FRONTEND_DIST / full_path
+        file_path = _frontend_path(full_path)
         if file_path.is_file():
             return FileResponse(file_path)
         
         # Fall back to index.html for client-side routing
-        index_path = FRONTEND_DIST / "index.html"
+        index_path = _frontend_path("index.html")
         if index_path.exists():
             return FileResponse(index_path)
         

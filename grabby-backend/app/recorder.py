@@ -86,22 +86,38 @@ class MeetingRecorder:
         """If a file with this stem already exists in RECORDINGS_DIR, append _1, _2, … until unique."""
         candidate = stem
         counter = 1
-        while (any(RECORDINGS_DIR.glob(f"{candidate}.*"))
+        while (any(path.stem.casefold() == candidate.casefold() for path in RECORDINGS_DIR.iterdir())
                or any(db.get_transcription(f"{candidate}{ext}") for ext in (".mp3", ".wav"))):
             candidate = f"{stem}_{counter}"
             counter += 1
         return candidate
+
+    @staticmethod
+    def _validate_stem(filename: str) -> str:
+        filename = filename.removesuffix(".mp3").removesuffix(".wav")
+        # Windows device names remain reserved even when followed by an extension.
+        device = filename.split(".", 1)[0].rstrip(" ").upper()
+        reserved = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+        reserved.update(f"{prefix}{digit}" for prefix in ("COM", "LPT") for digit in "123456789¹²³")
+        if (not filename.strip() or len(filename) > 160
+                or filename.endswith((".", " "))
+                or any(ord(char) < 32 or char in '<>:"/\\|?*' for char in filename)
+                or device in reserved
+                or filename.casefold() in {"_temp_loopback", "_temp_mic"}):
+            raise ValueError("Use a recording name of 1–160 characters without Windows filename restrictions or reserved names.")
+        return filename
 
     def start(self, filename: str | None = None):
         with self._lock:
             if self._recording or self._saving or (self._thread and self._thread.is_alive()):
                 raise RuntimeError("Already recording")
 
-            self._started_at = datetime.now()
+            started_at = datetime.now()
             if filename is None:
-                filename = f"recording_{self._started_at.strftime('%Y%m%d_%H%M%S')}"
-            filename = filename.removesuffix(".mp3").removesuffix(".wav")
+                filename = f"recording_{started_at.strftime('%Y%m%d_%H%M%S')}"
+            filename = self._validate_stem(filename)
             filename = self._unique_stem(filename)
+            self._started_at = started_at
             self._current_file = filename
             self.notes_id = db.create_notes()["id"]
             self._loopback_frames = []

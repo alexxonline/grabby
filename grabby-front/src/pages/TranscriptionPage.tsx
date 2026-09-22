@@ -4,30 +4,8 @@ import { api } from "../api";
 import type { TranscriptionStatus } from "../api";
 import { RecordingTabs } from "../components/RecordingTabs";
 
-interface SpeakerEntry {
-  original: string; // e.g. "Speaker A"
-  current: string;  // edited name
-}
-
-/** Extract unique "Speaker X" labels from transcript text. */
-function extractSpeakers(text: string): SpeakerEntry[] {
-  const regex = /^(Speaker [A-Z0-9]+):/gm;
-  const seen = new Set<string>();
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    seen.add(match[1]);
-  }
-  return Array.from(seen)
-    .sort()
-    .map((s) => ({ original: s, current: s }));
-}
-
-/** Replace all occurrences of a speaker label in the text. */
-function replaceSpeaker(text: string, oldName: string, newName: string): string {
-  // Replace "OldName:" at start of line with "NewName:"
-  const escaped = oldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.replace(new RegExp(`^${escaped}:`, "gm"), `${newName}:`);
-}
+import { extractSpeakers, replaceSpeaker } from "../components/speakers";
+import type { SpeakerEntry } from "../components/speakers";
 
 export function TranscriptionPage({
   path: _path,
@@ -93,6 +71,16 @@ export function TranscriptionPage({
       cancelEditing();
       return;
     }
+
+    if (/[:\r\n]/.test(newName)) {
+      setError("Speaker names cannot contain colons or line breaks.");
+      return;
+    }
+    if (speakers.some((speaker, index) => index !== idx && speaker.current === newName)) {
+      setError("Choose a different name for each speaker.");
+      return;
+    }
+    setError(null);
 
     const speaker = speakers[idx];
     if (newName === speaker.current) {

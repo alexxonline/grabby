@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import { api } from "../api";
 import type { SearchResult } from "../api";
+import { renderSearchSnippet } from "../components/searchSnippet";
 
 interface Props {
   path?: string;
@@ -63,10 +64,9 @@ export function SearchPage(_props: Props) {
             <li key={r.filename} class="search-result-item">
               <a href={`/transcription/${encodeURIComponent(r.filename)}`} class="search-result-link">
                 <span class="search-result-name">{r.title || r.filename.replace(/\.[^.]+$/, "")}</span>
-                <span
-                  class="search-result-snippet"
-                  dangerouslySetInnerHTML={{ __html: r.snippet.replace(/\*\*(.*?)\*\*/g, "<mark>$1</mark>") }}
-                />
+                <span class="search-result-snippet">
+                  {renderSearchSnippet(r.snippet)}
+                </span>
               </a>
             </li>
           ))}

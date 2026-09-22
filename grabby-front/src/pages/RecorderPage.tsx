@@ -11,7 +11,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
   });
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [operation, setOperation] = useState<"starting" | "stopping" | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<number | null>(null);
   const [savedFile, setSavedFile] = useState<string | null>(null);
@@ -66,7 +66,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
 
   const handleStart = async () => {
     setError(null);
-    setLoading(true);
+    setOperation("starting");
     try {
       const res = await api.startRecording(name || undefined);
       setStatus(res);
@@ -75,13 +75,13 @@ export function RecorderPage({ path: _path }: { path?: string }) {
     } catch (e: any) {
       setError(e.message);
     } finally {
-      setLoading(false);
+      setOperation(null);
     }
   };
 
   const handleStop = async () => {
     setError(null);
-    setLoading(true);
+    setOperation("stopping");
     try {
       const res = await api.stopRecording();
       setStatus(res);
@@ -89,7 +89,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
     } catch (e: any) {
       setError(e.message);
     } finally {
-      setLoading(false);
+      setOperation(null);
     }
   };
 
@@ -101,7 +101,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
         {/* Status indicator */}
         <div class={`status-badge ${status.recording ? "recording" : "idle"}`}>
           <span class="status-dot" />
-          {status.recording ? "Recording" : "Ready"}
+          {operation === "stopping" ? "Saving recording…" : operation === "starting" ? "Starting…" : status.recording ? "Recording" : "Ready"}
         </div>
 
         {/* Timer */}
@@ -110,7 +110,7 @@ export function RecorderPage({ path: _path }: { path?: string }) {
         )}
 
         {/* Name input */}
-        {!status.recording && (
+        {!status.recording && operation === null && (
           <div class="name-input">
             <input
               type="text"
@@ -128,23 +128,13 @@ export function RecorderPage({ path: _path }: { path?: string }) {
 
         {/* Controls */}
         <div class="controls">
-          {!status.recording ? (
-            <button
-              class="btn btn-start"
-              onClick={handleStart}
-              disabled={loading}
-            >
-              {loading ? "Starting…" : "Start Recording"}
-            </button>
-          ) : (
-            <button
-              class="btn btn-stop"
-              onClick={handleStop}
-              disabled={loading}
-            >
-              {loading ? "Stopping…" : "Stop Recording"}
-            </button>
-          )}
+          <button
+            class={`btn ${operation === "stopping" || (operation === null && status.recording) ? "btn-stop" : "btn-start"}`}
+            onClick={status.recording ? handleStop : handleStart}
+            disabled={operation !== null}
+          >
+            {operation === "stopping" ? "Stopping…" : operation === "starting" ? "Starting…" : status.recording ? "Stop Recording" : "Start Recording"}
+          </button>
         </div>
 
         {error && <p class="error">{error}</p>}

@@ -102,7 +102,11 @@ def get_transcription(filename: str) -> dict | None:
 
 
 def search_transcriptions(query: str) -> list[dict]:
-    """Full-text search across transcriptions. Returns matching rows with snippets."""
+    """Search literal user terms, requiring each whitespace-separated term."""
+    terms = query.split()
+    if not terms:
+        return []
+    match_query = " AND ".join('"' + term.replace('"', '""') + '"' for term in terms)
     conn = _get_conn()
     rows = conn.execute(
         """
@@ -113,7 +117,7 @@ def search_transcriptions(query: str) -> list[dict]:
         WHERE transcriptions_fts MATCH ?
         ORDER BY rank
         """,
-        (query,),
+        (match_query,),
     ).fetchall()
     return [dict(r) for r in rows]
 

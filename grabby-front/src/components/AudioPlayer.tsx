@@ -12,40 +12,50 @@ export function AudioPlayer({ src, title, onClose }: AudioPlayerProps) {
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [dragging, setDragging] = useState(false);
+  const dragging = useRef(false);
 
   useEffect(() => {
     const audio = audioRef.current!;
+    dragging.current = false;
+    setPlaying(!audio.paused);
+    setCurrent(audio.currentTime);
+    setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
     const onLoaded = () => setDuration(audio.duration);
     const onTime = () => {
-      if (!dragging) setCurrent(audio.currentTime);
+      if (!dragging.current) setCurrent(audio.currentTime);
     };
     const onEnded = () => setPlaying(false);
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
 
     audio.addEventListener("loadedmetadata", onLoaded);
     audio.addEventListener("timeupdate", onTime);
     audio.addEventListener("ended", onEnded);
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
 
     return () => {
       audio.removeEventListener("loadedmetadata", onLoaded);
       audio.removeEventListener("timeupdate", onTime);
       audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
       audio.pause();
     };
-  }, [src, dragging]);
+  }, [src]);
 
   const togglePlay = () => {
     const audio = audioRef.current!;
-    if (playing) {
+    if (!audio.paused) {
       audio.pause();
     } else {
-      audio.play();
+      void audio.play().catch(() => setPlaying(false));
     }
-    setPlaying(!playing);
   };
 
   const seekTo = useCallback(
     (clientX: number) => {
+      if (!Number.isFinite(duration) || duration <= 0) return;
       const bar = progressRef.current!;
       const rect = bar.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
@@ -57,18 +67,18 @@ export function AudioPlayer({ src, title, onClose }: AudioPlayerProps) {
   );
 
   const onPointerDown = (e: PointerEvent) => {
-    setDragging(true);
+    dragging.current = true;
     seekTo(e.clientX);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
   const onPointerMove = (e: PointerEvent) => {
-    if (!dragging) return;
+    if (!dragging.current) return;
     seekTo(e.clientX);
   };
 
   const onPointerUp = () => {
-    setDragging(false);
+    dragging.current = false;
   };
 
   const fmt = (s: number) => {
@@ -113,6 +123,8 @@ export function AudioPlayer({ src, title, onClose }: AudioPlayerProps) {
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onLostPointerCapture={onPointerUp}
         >
           <div class="ap-progress-track">
             <div class="ap-progress-fill" style={{ width: `${pct}%` }} />
