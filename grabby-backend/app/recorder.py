@@ -4,6 +4,7 @@ import wave
 import audioop
 import subprocess
 import uuid
+import json
 from contextlib import ExitStack
 from itertools import zip_longest
 from datetime import datetime
@@ -69,6 +70,11 @@ class MeetingRecorder:
     def _capture_failed(self, exc: Exception):
         self._error = f"Audio capture failed: {exc}"
         self._recording = False
+        if self._capture_dir:
+            self._save_pending = any(
+                path.exists() and path.stat().st_size >= channels * 2
+                for path, channels in ((self._capture_dir / "loopback.pcm", self._lb_channels),
+                                       (self._capture_dir / "mic.pcm", self._mic_channels)))
         if self.live:
             try:
                 self.live.stop()
@@ -76,6 +82,45 @@ class MeetingRecorder:
                 log.exception("Failed to stop live transcription after capture failure")
 
     # ------------------------------------------------------------------
+    def _write_manifest(self):
+        manifest = self._capture_dir / "capture.json"
+        temporary = manifest.with_suffix(".tmp")
+        temporary.write_text(json.dumps({
+            "name": self._current_file, "notes_id": self.notes_id,
+            "lb_rate": self._lb_rate, "lb_channels": self._lb_channels,
+            "mic_rate": self._mic_rate, "mic_channels": self._mic_channels,
+            "saved_output": self._saved_output.name if self._saved_output else None,
+        }), encoding="utf-8")
+        temporary.replace(manifest)
+
+    def recover_pending(self):
+        """Restore one interrupted capture at a time, without guessing raw PCM formats."""
+        with self._lock:
+            if self._recording or self._saving or self._save_pending or (self._thread and self._thread.is_alive()):
+                return
+            for manifest in sorted(RECORDINGS_DIR.glob(".capture-*/capture.json")):
+                try:
+                    data = json.loads(manifest.read_text(encoding="utf-8"))
+                    name = self._validate_stem(data["name"])
+                    params = [data[k] for k in ("lb_rate", "lb_channels", "mic_rate", "mic_channels")]
+                    if any(not isinstance(value, int) or value <= 0 for value in params):
+                        continue
+                    saved = data.get("saved_output")
+                    if saved and (Path(saved).name != saved or saved not in (name + ".wav", name + ".mp3")):
+                        continue
+                    if not any(p.stat().st_size for p in manifest.parent.glob("*.pcm")):
+                        continue
+                    self._capture_dir = manifest.parent
+                    self._current_file = name
+                    self.notes_id = data["notes_id"]
+                    self._lb_rate, self._lb_channels, self._mic_rate, self._mic_channels = params
+                    self._saved_output = RECORDINGS_DIR / saved if saved else None
+                    self._save_pending = True
+                    self._error = "Interrupted audio capture recovered. Use Retry Save."
+                    return
+                except (OSError, ValueError, KeyError, TypeError):
+                    log.exception("Could not restore capture %s", manifest)
+
     def _get_loopback_device(self, p: pyaudio.PyAudio):
         """Find a WASAPI loopback device."""
         wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
@@ -133,6 +178,7 @@ class MeetingRecorder:
         return filename
 
     def start(self, filename: str | None = None):
+        self.recover_pending()
         with self._lock:
             if self._save_pending:
                 raise RuntimeError("Save the previous recording before starting another. Use Retry Save.")
@@ -210,6 +256,7 @@ class MeetingRecorder:
             self._lb_channels = loopback_dev["maxInputChannels"]
             self._mic_rate = int(mic_dev["defaultSampleRate"])
             self._mic_channels = mic_dev["maxInputChannels"] or 1
+            self._write_manifest()
 
             with ExitStack() as files:
                 for source, device, rate, channels, name in (
@@ -222,18 +269,39 @@ class MeetingRecorder:
                                     frames_per_buffer=1024)
                     streams.append((stream, output, source, rate, channels))
 
-                while self._recording:
-                    for stream, output, source, rate, channels in streams:
-                        try:
-                            data = stream.read(1024, exception_on_overflow=False)
-                        except Exception:
-                            if not self._recording:
-                                break
-                            raise
-                        # Disk errors must stop capture, not silently drop audio.
-                        output.write(data)
-                        if self.live:
-                            self.live.feed(source, data, rate, channels)
+                failures = []
+
+                def read_source(stream, output, source, rate, channels):
+                    try:
+                        while self._recording:
+                            # Each device is drained at its own rate. Stop on overflow
+                            # instead of silently splicing a gap out of one stream.
+                            try:
+                                data = stream.read(1024, exception_on_overflow=True)
+                            except Exception:
+                                if not self._recording:
+                                    return
+                                raise
+                            output.write(data)
+                            if self.live:
+                                self.live.feed(source, data, rate, channels)
+                    except Exception as exc:
+                        failures.append(exc)
+                        self._recording = False
+
+                readers = []
+                try:
+                    for args in streams:
+                        reader = threading.Thread(target=read_source, args=args, daemon=True)
+                        reader.start()
+                        readers.append(reader)
+                finally:
+                    if len(readers) != len(streams):
+                        self._recording = False
+                    for reader in readers:
+                        reader.join()
+                if failures:
+                    raise failures[0]
         except Exception as exc:
             log.exception("Audio capture failed")
             self._capture_failed(exc)
@@ -260,8 +328,13 @@ class MeetingRecorder:
         block_bytes = 4096 * target_channels * 2
         pending = bytearray()
         state = None
+        if not path.exists():
+            return
         with path.open("rb") as source:
             while data := source.read(4096 * channels * 2):
+                data = data[:len(data) // (channels * 2) * (channels * 2)]
+                if not data:
+                    break
                 if rate != target_rate:
                     data, state = audioop.ratecv(data, 2, channels, rate, target_rate, state)
                 if channels != target_channels:
@@ -325,12 +398,15 @@ class MeetingRecorder:
                 encoded_mp3.replace(output_file)
             # If attaching notes fails, retry it without exporting a second file.
             self._saved_output = output_file
+            self._write_manifest()
 
         output_file = self._saved_output
         db.attach_notes(self.notes_id, output_file.name)
         # Cleanup failure must not turn an already saved recording into a failed save.
         try:
-            for name in ("loopback.pcm", "mic.pcm", "mixed.wav", "mixed.mp3"):
+            # Retire recovery first: leftover PCM after a cleanup failure must
+            # not make a successfully saved meeting appear interrupted again.
+            for name in ("capture.json", "capture.tmp", "loopback.pcm", "mic.pcm", "mixed.wav", "mixed.mp3"):
                 (self._capture_dir / name).unlink(missing_ok=True)
             self._capture_dir.rmdir()
         except OSError:

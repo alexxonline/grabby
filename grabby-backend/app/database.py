@@ -37,6 +37,7 @@ def init_db() -> None:
     """Create tables and FTS virtual table if they don't exist."""
     conn = _get_conn()
     conn.executescript("""
+        CREATE TABLE IF NOT EXISTS processing_jobs (filename TEXT PRIMARY KEY, state TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value INTEGER NOT NULL
@@ -212,6 +213,7 @@ def delete_metadata(filename: str) -> None:
     with conn:
         conn.execute("DELETE FROM recording_metadata WHERE filename = ?", (filename,))
         conn.execute("DELETE FROM recording_notes WHERE filename = ?", (filename,))
+        conn.execute("DELETE FROM processing_jobs WHERE filename = ?", (filename,))
 
 
 def create_notes(filename: str | None = None) -> dict:
@@ -239,3 +241,14 @@ def save_notes(notes_id: str, text: str) -> bool:
     with _get_conn() as conn:
         result = conn.execute("UPDATE recording_notes SET text = ? WHERE id = ?", (text, notes_id))
     return result.rowcount > 0
+
+
+def set_job_state(filename: str, state: str) -> None:
+    with _get_conn() as conn:
+        conn.execute("INSERT OR REPLACE INTO processing_jobs VALUES (?, ?)", (filename, state))
+
+
+def recover_jobs() -> None:
+    with _get_conn() as conn:
+        conn.execute("UPDATE recording_metadata SET processing_error = 'Processing interrupted by backend restart. Retry transcription if no transcript is available.' WHERE filename IN (SELECT filename FROM processing_jobs WHERE state = 'pending')")
+        conn.execute("UPDATE processing_jobs SET state = 'interrupted' WHERE state = 'pending'")

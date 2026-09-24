@@ -23,12 +23,15 @@ export function TranscriptionPage({
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const renameInFlight = useRef(false);
+  const loadedText = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!filename) return;
     let active = true;
     let timer: number;
+    loadedText.current = false;
     setLoading(true);
     setError(null);
     setDisplayText("");
@@ -36,11 +39,12 @@ export function TranscriptionPage({
     const poll = () => api.getTranscription(filename).then((ts) => {
         if (!active) return;
         setTranscription(ts);
-        if (ts.status === "completed" && ts.text) {
+        if (ts.status === "completed" && ts.text != null && !loadedText.current) {
+          loadedText.current = true;
           setDisplayText(ts.text);
           setSpeakers(extractSpeakers(ts.text));
         }
-        if (ts.status === "pending") timer = window.setTimeout(poll, 2000);
+        if (ts.status === "pending" || ts.processing) timer = window.setTimeout(poll, 2000);
       })
       .catch((e: Error) => { if (active) setError(e.message); })
       .finally(() => { if (active) setLoading(false); });
@@ -66,6 +70,7 @@ export function TranscriptionPage({
   };
 
   const confirmRename = async (idx: number) => {
+    if (renameInFlight.current) return;
     const newName = editValue.trim();
     if (!newName || !filename) {
       cancelEditing();
@@ -88,25 +93,25 @@ export function TranscriptionPage({
       return;
     }
 
-    // Replace in displayed text
+    // Prepare the edit, then publish it only after the server accepts it.
     const updatedText = replaceSpeaker(displayText, speaker.current, newName);
-    setDisplayText(updatedText);
-
-    // Update speakers list
     const updatedSpeakers = speakers.map((s, i) =>
       i === idx ? { ...s, current: newName } : s
     );
-    setSpeakers(updatedSpeakers);
-    setEditingIdx(null);
-    setEditValue("");
 
     // Persist to backend
+    renameInFlight.current = true;
     setSaving(true);
     try {
       await api.updateTranscription(filename, updatedText);
+      setDisplayText(updatedText);
+      setSpeakers(updatedSpeakers);
+      setEditingIdx(null);
+      setEditValue("");
     } catch (e: any) {
       setError(e.message);
     } finally {
+      renameInFlight.current = false;
       setSaving(false);
     }
   };
@@ -172,7 +177,7 @@ export function TranscriptionPage({
     );
   }
 
-  const decodedName = filename ? decodeURIComponent(filename).replace(/\.[^.]+$/, "") : "";
+  const decodedName = filename ? filename.replace(/\.[^.]+$/, "") : "";
 
   const copyToClipboard = async () => {
     try {
@@ -198,6 +203,8 @@ export function TranscriptionPage({
 
       <RecordingTabs filename={filename} initialNotes={new URLSearchParams(location.search).get("tab") === "notes"}>
       {error && <p class="error">{error}</p>}
+      {transcription?.processing && <p role="status">Finishing recording title and cleanup...</p>}
+      {transcription?.status === "completed" && transcription.error && <p class="error">{transcription.error}</p>}
       {transcription?.status !== "completed" && <p class="empty">
         {transcription?.status === "pending" ? "The transcript is processing. You can add notes now." :
           transcription?.status === "error" ? `Transcription failed: ${transcription.error}` : "No transcription available yet. You can still add notes."}
@@ -212,6 +219,7 @@ export function TranscriptionPage({
                 {editingIdx === idx ? (
                   <input
                     ref={inputRef}
+                    disabled={saving}
                     class="speaker-chip-input"
                     type="text"
                     value={editValue}
@@ -224,6 +232,7 @@ export function TranscriptionPage({
                 ) : (
                   <button
                     class="speaker-chip-btn"
+                    disabled={saving}
                     onClick={() => startEditing(idx)}
                     title="Click to rename"
                   >

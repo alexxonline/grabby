@@ -37,6 +37,7 @@ def _ensure_database() -> bool:
             return False
         try:
             db.init_db()
+            db.recover_jobs()
         except (sqlite3.Error, OSError):
             log.exception("Database initialization failed; backend will remain available and retry")
             _database_retry_at = time.monotonic() + 5
@@ -126,6 +127,7 @@ class TranscriptionStatus(BaseModel):
     text: str | None = None
     language: str | None = None
     error: str | None = None
+    processing: bool = False
 
 
 class SearchResult(BaseModel):
@@ -198,6 +200,7 @@ def _require_idle(filename: str):
 
 @app.get("/api/status", response_model=RecordingStatus)
 def get_status():
+    recorder.recover_pending()
     return RecordingStatus(
         recording=recorder.is_recording,
         save_pending=recorder.save_pending,
@@ -230,6 +233,12 @@ def stop_recording(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=409, detail=str(e))
     _transcribing[filepath.name] = "pending"
     _transcribe_errors.pop(filepath.name, None)
+    try:
+        _recording_info(filepath.name)
+        db.set_job_state(filepath.name, "pending")
+    except Exception:
+        # Audio is already saved. Let the worker report a database failure.
+        log.exception("Could not persist queued processing job")
     background_tasks.add_task(_do_transcribe, filepath.name)
     return RecordingStatus(recording=False, filename=filepath.name, notes_id=recorder.notes_id)
 
@@ -307,6 +316,7 @@ def _do_transcribe(filename: str):
         settings = db.get_settings()
         _recording_info(filename)
         db.set_processing_error(filename, None)
+        db.set_job_state(filename, "pending")
         result = transcribe_file(filepath)
         db.save_transcription(filename, result["text"], result.get("language"))
         transcript_saved = True
@@ -327,6 +337,13 @@ def _do_transcribe(filename: str):
         prefix = "Transcript saved, but post-processing failed: " if transcript_saved else ""
         errors.append(prefix + (str(exc) or type(exc).__name__))
     finally:
+        try:
+            db.ensure_metadata(filename, datetime.now().isoformat())
+            db.set_processing_error(filename, " ".join(errors) or None)
+            db.set_job_state(filename, "completed" if transcript_saved else "error")
+        except Exception as exc:
+            log.exception("Could not persist processing outcome")
+            errors.append(str(exc) or type(exc).__name__)
         # Finalize in memory even if the database cannot store the failure.
         if errors:
             _transcribe_errors[filename] = " ".join(errors)
@@ -339,24 +356,16 @@ def _do_transcribe(filename: str):
 def start_transcription(filename: str, background_tasks: BackgroundTasks):
     filepath = _recording_path(filename)
 
-    # If already transcribed, return it
-    existing = db.get_transcription(filename)
-    if existing:
-        return TranscriptionStatus(
-            filename=filename,
-            status="completed",
-            text=existing["text"],
-            language=existing.get("language"),
-        )
-
-    # If already in progress, report pending
-    if _transcribing.get(filename) == "pending":
-        return TranscriptionStatus(filename=filename, status="pending")
+    if db.get_transcription(filename) or _transcribing.get(filename) == "pending":
+        return get_transcription(filename)
 
     if not filepath.is_file():
         raise HTTPException(status_code=404, detail="Audio not found")
 
     # Launch background transcription
+    _recording_info(filename)
+    db.set_processing_error(filename, None)
+    db.set_job_state(filename, "pending")
     _transcribing[filename] = "pending"
     _transcribe_errors.pop(filename, None)
     background_tasks.add_task(_do_transcribe, filename)
@@ -365,12 +374,17 @@ def start_transcription(filename: str, background_tasks: BackgroundTasks):
 
 @app.get("/api/recordings/{filename}/transcription", response_model=TranscriptionStatus)
 def get_transcription(filename: str):
-    # Check DB first
+    metadata = db.get_metadata(filename)
+    processing = _transcribing.get(filename) == "pending"
+    error = _transcribe_errors.get(filename) or metadata.get("processing_error")
+    # Transcript availability is independent of post-processing.
     existing = db.get_transcription(filename)
     if existing:
         return TranscriptionStatus(
             filename=filename,
-            title=db.get_metadata(filename).get("title"),
+            title=metadata.get("title"),
+            processing=processing,
+            error=error,
             status="completed",
             text=existing["text"],
             language=existing.get("language"),
@@ -380,11 +394,11 @@ def get_transcription(filename: str):
     status = _transcribing.get(filename)
     if status == "pending":
         return TranscriptionStatus(filename=filename, status="pending")
-    if status == "error":
+    if status == "error" or error:
         return TranscriptionStatus(
             filename=filename,
             status="error",
-            error=_transcribe_errors.get(filename, "Unknown error"),
+            error=error or "Unknown error",
         )
 
     return TranscriptionStatus(filename=filename, status="none")

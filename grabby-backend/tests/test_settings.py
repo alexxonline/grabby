@@ -45,6 +45,34 @@ class SettingsProcessingTests(unittest.TestCase):
         with patch.object(main, 'transcribe_file', return_value={'text': 'Speaker 1: Project launch', 'language': 'en'}):
             main._do_transcribe(self.audio.name)
 
+    def test_transcript_available_while_title_pending_and_warning_survives_restart(self):
+        def title(text):
+            status = main.get_transcription(self.audio.name)
+            self.assertEqual(status.status, 'completed')
+            self.assertTrue(status.processing)
+            self.assertTrue(main.start_transcription(self.audio.name, BackgroundTasks()).processing)
+            raise RuntimeError('title failed')
+        with patch.object(main, 'suggest_title', side_effect=title):
+            self.process(auto_title=True)
+        main._transcribing.clear()
+        main._transcribe_errors.clear()
+        result = main.get_transcription(self.audio.name)
+        self.assertFalse(result.processing)
+        self.assertEqual(result.error, 'title failed')
+
+    def test_failed_and_interrupted_jobs_survive_restart(self):
+        with patch.object(main, 'transcribe_file', side_effect=RuntimeError('provider failed')), self.assertLogs('app.main'):
+            main._do_transcribe(self.audio.name)
+        main._transcribing.clear()
+        main._transcribe_errors.clear()
+        self.assertEqual(main.get_transcription(self.audio.name).error, 'provider failed')
+        db.set_processing_error(self.audio.name, None)
+        db.set_job_state(self.audio.name, 'pending')
+        db.recover_jobs()
+        status = main.get_transcription(self.audio.name)
+        self.assertEqual(status.status, 'error')
+        self.assertIn('interrupted', status.error)
+
     def test_defaults_and_settings_persist_without_exposing_key(self):
         self.assertEqual(db.get_settings(), {'auto_delete_audio': False, 'auto_title': False})
         with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'secret-test-value'}):

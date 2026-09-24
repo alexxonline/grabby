@@ -9,6 +9,7 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
   const [loading, setLoading] = useState(true);
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
+  const [pollError, setPollError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playingRec, setPlayingRec] = useState<RecordingInfo | null>(null);
 
@@ -17,10 +18,10 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
   const pollTimers = useRef<Record<string, number>>({});
 
   const fetchRecordings = async () => {
-    setLoading(true);
     try {
       const data = await api.listRecordings();
       setRecordings(data);
+      setPollError(null);
       setError(null);
     } catch (e: any) {
       setError(e.message);
@@ -37,9 +38,10 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
     if (!recordings.some(rec => rec.processing)) return;
     const timer = window.setInterval(() => {
       api.listRecordings().then(data => {
+        setPollError(null);
         setRecordings(data);
         setPlayingRec(current => current && data.find(rec => rec.filename === current.filename && rec.audio_available) || null);
-      }).catch(e => setError(e.message));
+      }).catch(e => setPollError(e.message));
     }, 2000);
     return () => clearInterval(timer);
   }, [recordings]);
@@ -66,13 +68,13 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
 
   useEffect(() => {
     Object.entries(transcriptions).forEach(([filename, status]) => {
-      if (status.status === "pending" && !pollTimers.current[filename]) {
+      if ((status.status === "pending" || status.processing) && !pollTimers.current[filename]) {
         // Poll for completion
         const timer = window.setInterval(async () => {
           try {
             const updated = await api.getTranscription(filename);
             setTranscriptions((prev) => ({ ...prev, [filename]: updated }));
-            if (updated.status === "completed" || updated.status === "error") {
+            if (updated.status !== "pending" && !updated.processing) {
               clearInterval(timer);
               delete pollTimers.current[filename];
             }
@@ -156,6 +158,7 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
       <h1>Recordings</h1>
 
       {error && <p class="error">{error}</p>}
+      {pollError && <p class="error">{pollError}</p>}
 
       {loading ? (
         <p class="loading">Loading recordings…</p>

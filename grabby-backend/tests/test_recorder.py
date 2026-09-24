@@ -1,4 +1,5 @@
 """Disk-backed capture and bounded-memory export, without audio hardware."""
+import threading
 import audioop
 import shutil
 import tempfile
@@ -39,6 +40,8 @@ class RecorderTests(unittest.TestCase):
         self.write_pcm("mic.pcm", [2000] * 100)
         capture = recorder._capture_dir
         with patch.object(main, "recorder", recorder), \
+                patch.object(main, "_recording_info"), \
+                patch("app.recorder.db.set_job_state"), \
                 patch("app.recorder.RECORDINGS_DIR", self.root), \
                 patch("app.recorder.db.attach_notes") as attach:
             tasks = BackgroundTasks()
@@ -64,6 +67,54 @@ class RecorderTests(unittest.TestCase):
             attach.assert_called_once_with("notes", "meeting.wav")
             self.assertFalse(capture.exists())
             main._transcribing.pop("meeting.wav", None)
+
+    def test_partial_capture_survives_failure_and_restart(self):
+        recorder = self.recorder
+        self.write_pcm("loopback.pcm", [1000] * 100)
+        # Simulate a missing mic and an incomplete trailing frame.
+        with (recorder._capture_dir / "loopback.pcm").open("ab") as out:
+            out.write(b"x")
+        recorder._write_manifest()
+        recorder._capture_failed(OSError("device lost"))
+        self.assertTrue(recorder.save_pending)
+        capture = recorder._capture_dir.rename(self.root / ".capture-recovery")
+        restored = MeetingRecorder()
+        with patch("app.recorder.RECORDINGS_DIR", self.root), patch("app.recorder.db.attach_notes") as attach:
+            restored.recover_pending()
+            self.assertTrue(restored.save_pending)
+            with self.assertRaisesRegex(RuntimeError, "previous recording"):
+                restored.start("new")
+            with patch.object(restored, "_export_mp3", side_effect=FileNotFoundError()), self.assertLogs("app.recorder"):
+                result = restored.stop()
+            with wave.open(result, "rb") as audio:
+                self.assertEqual(audio.getnframes(), 100)
+            attach.assert_called_once_with("notes", "meeting.wav")
+            self.assertFalse(capture.exists())
+
+    def test_devices_are_read_independently_and_overflow_is_reported(self):
+        recorder = self.recorder
+        recorder._recording = True
+        mic_read = threading.Event()
+        device = {"defaultSampleRate": 48000, "maxInputChannels": 1, "index": 0}
+        mic_device = dict(device, defaultSampleRate=44100)
+        system, mic = MagicMock(), MagicMock()
+        def system_read(frames, exception_on_overflow):
+            if not mic_read.wait(2):
+                raise RuntimeError("mic was blocked by system reader")
+            self.assertTrue(exception_on_overflow)
+            raise OSError("input overflow")
+        def mic_read_data(*args, **kwargs):
+            mic_read.set()
+            return b"\0" * 2048
+        system.read.side_effect = system_read
+        mic.read.side_effect = mic_read_data
+        backend = MagicMock()
+        backend.open.side_effect = [system, mic]
+        with patch("app.recorder.pyaudio.PyAudio", return_value=backend), patch.object(recorder, "_get_loopback_device", return_value=device), patch.object(recorder, "_get_default_mic", return_value=mic_device), self.assertLogs("app.recorder"):
+            recorder._record_loop()
+        self.assertIn("input overflow", recorder.error)
+        self.assertTrue(mic_read.is_set())
+        self.assertTrue(recorder.save_pending)
 
     def test_notes_failure_retries_existing_export(self):
         recorder = self.recorder
@@ -227,13 +278,15 @@ class RecorderTests(unittest.TestCase):
         def capture(blocks):
             recorder._recording = True
             remaining = blocks
+            read_lock = threading.Lock()
 
             class Stream:
                 def read(self, frames, **kwargs):
                     nonlocal remaining
-                    remaining -= 1
-                    if remaining == 0:
-                        recorder._recording = False
+                    with read_lock:
+                        remaining -= 1
+                        if remaining <= 0:
+                            recorder._recording = False
                     return b"\x01\x00" * frames
 
                 def stop_stream(self):
@@ -254,8 +307,8 @@ class RecorderTests(unittest.TestCase):
                 finally:
                     tracemalloc.stop()
             self.assertIsNone(recorder._error)
-            self.assertEqual((recorder._capture_dir / "loopback.pcm").stat().st_size, blocks // 2 * 2048)
-            self.assertEqual((recorder._capture_dir / "mic.pcm").stat().st_size, blocks // 2 * 2048)
+            captured = sum((recorder._capture_dir / name).stat().st_size for name in ("loopback.pcm", "mic.pcm"))
+            self.assertIn(captured, (blocks * 2048, (blocks + 1) * 2048))
             return peak
 
         short_peak = capture(200)
@@ -293,6 +346,7 @@ class RecorderTests(unittest.TestCase):
         with patch("app.recorder.pyaudio.PyAudio", return_value=backend), \
                 patch.object(recorder, "_get_loopback_device", return_value=device), \
                 patch.object(recorder, "_get_default_mic", return_value=device), \
+                patch.object(recorder, "_write_manifest"), \
                 patch.object(Path, "open", return_value=output), \
                 self.assertLogs("app.recorder", level="ERROR"):
             recorder._record_loop()
