@@ -54,10 +54,24 @@ test("opens the player for a saved audio file", async ({ page }) => {
 });
 
 test("opens a transcript without sending audio to a speech service", async ({ page }) => {
+  const requests: { url: string; method: string; body: string | null }[] = [];
+  page.on("request", (request) => {
+    requests.push({ url: request.url(), method: request.method(), body: request.postData() });
+  });
+
   await page.goto("/recordings");
   const item = page.locator(".recording-item", { hasText: "Customer interview" });
   await item.getByRole("button", { name: "Transcribe" }).click();
   await expect(page).toHaveURL(/\/transcription\/interview\.wav$/);
   await expect(page.getByRole("heading", { name: "Customer interview" })).toBeVisible();
   await expect(page.getByText("Thanks for joining.")).toBeVisible();
+
+  const transcribe = requests.filter((request) =>
+    request.method === "POST" && request.url.endsWith("/api/recordings/interview.wav/transcribe"));
+  expect(transcribe).toHaveLength(1);
+  expect(transcribe[0].body ?? "").not.toMatch(/RIFF|audio_base_64|data:audio/i);
+
+  const appHosts = new Set(["127.0.0.1:5173", "localhost:5173", "127.0.0.1:8000", "localhost:8000"]);
+  const outside = requests.map((request) => new URL(request.url).host).filter((host) => !appHosts.has(host));
+  expect(outside).toEqual([]);
 });
