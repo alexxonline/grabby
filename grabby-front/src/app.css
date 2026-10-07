@@ -756,3 +756,28 @@
 .setting-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
 .setting-toggle:disabled { opacity: .5; cursor: wait; }
 @media (max-width: 480px) { .navbar { padding: .75rem 1rem; flex-wrap: wrap; gap: .75rem; } .nav-links { gap: 1rem; } }
+
+/* ===== Text sync ===== */
+.sync-card { margin-top: 1.5rem; padding-bottom: 1.5rem; }
+.sync-header { padding-top: 1.5rem; }
+.sync-header h2 { margin: 0 0 .5rem; font-size: 1.25rem; }
+.sync-header p, .sync-mock p, .sync-conflict > p { color: var(--text-muted); font-size: .9rem; line-height: 1.6; margin: 0; }
+.sync-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.sync-field { display: flex; flex-direction: column; gap: .4rem; margin-top: 1rem; }
+.sync-field label { font-weight: 600; }
+.text-input { box-sizing: border-box; width: 100%; padding: .6rem .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+.text-input:focus { outline: 2px solid var(--primary); outline-offset: 2px; border-color: var(--primary); }
+.text-input:disabled { opacity: .5; cursor: not-allowed; }
+.sync-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+.sync-mock { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border); }
+.sync-status { display: flex; flex-direction: column; gap: .35rem; margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border); color: var(--text-muted); font-size: .9rem; }
+.sync-status p { margin: 0; }
+.sync-status small { opacity: .7; overflow-wrap: anywhere; }
+.sync-conflict { margin-top: 1.25rem; padding: 1rem; border: 1px solid var(--danger); border-radius: 10px; background: var(--bg); }
+.sync-conflict h3 { margin: 0 0 .4rem; font-size: 1rem; }
+.sync-versions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.sync-version { min-width: 0; padding: .75rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.sync-version h4 { margin: 0; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+.sync-version p { margin: .4rem 0 0; font-size: .9rem; overflow-wrap: anywhere; }
+.sync-version-title { font-weight: 600; }
+.sync-version pre { margin: .5rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; font: inherit; font-size: .9rem; }

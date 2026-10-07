@@ -2,6 +2,12 @@
 
 ![Screenshot of grabby](grabby-screenshot.png)
 
+| Recordings | Transcript |
+| --- | --- |
+| ![Recordings](docs/screenshots/recordings.png) | ![Transcript](docs/screenshots/transcript.png) |
+| **Search** | **Recorder** |
+| ![Search](docs/screenshots/search.png) | ![Recorder](docs/screenshots/recorder.png) |
+
 
 Grabby is a local meeting recorder + transcription app.
 
@@ -12,8 +18,10 @@ It records:
 Then it lets you:
 - manage recordings (play, rename, delete)
 - transcribe recordings with ElevenLabs Scribe v2
-- edit transcripts (including speaker renaming)
+- edit transcripts (including speaker renaming) and keep notes per recording
 - search across all transcripts with SQLite FTS5
+- optionally auto-delete audio and auto-title recordings (see [Recording settings](#recording-settings))
+- optionally sync titles, transcripts and notes across devices (see [Text sync](#text-sync))
 
 ## Tech Stack
 
@@ -26,6 +34,8 @@ Then it lets you:
 - `grabby-backend/` — FastAPI API + recorder + transcription logic
 - `grabby-front/` — Preact web app
 - `grabby-backend/recordings/` — saved `.mp3` / `.wav` files
+- `docs/screenshots/` — README screenshots (generated from the Playwright mock API)
+- `SYNC.md` — text sync plan and API contract
 - `research/` — notes and research docs
 
 ## Prerequisites
@@ -66,6 +76,8 @@ Create `grabby-backend/.env` with:
 ELEVENLABS_API_KEY=your_key_here
 # Optional, for automatic titles
 OPENROUTER_API_KEY=your_openrouter_key_here
+# Optional, for text sync (never returned by the API)
+GRABBY_SYNC_API_KEY=your_sync_key_here
 ```
 
 ### Run backend
@@ -101,6 +113,20 @@ The frontend calls the backend at `http://localhost:8000/api`.
 - `GET /api/recordings/{filename}/transcription` — get transcription status/content
 - `PUT /api/recordings/{filename}/transcription` — update transcript text
 - `GET /api/transcriptions/search?q=...` — full-text transcript search
+- `GET /api/settings`, `PUT /api/settings` — recording preferences
+- `/api/sync/*` — text sync settings, status, manual sync, conflicts and mock scenarios (see `SYNC.md`)
+
+## End-to-end tests
+
+Playwright tests run against the Vite dev server with a mocked API, so no backend, audio device or API keys are needed. They use the installed Chrome browser.
+
+```powershell
+cd grabby-front
+npm run test:e2e
+npm run test:e2e:report   # open the HTML report
+```
+
+Backend tests: `cd grabby-backend; .venv\Scripts\python -m pytest`.
 
 ## Build Frontend for FastAPI Static Hosting (Optional)
 
@@ -142,3 +168,16 @@ Open **Settings** to enable either option (both are off by default and persist i
 Set `OPENROUTER_API_KEY` in `grabby-backend/.env` and restart the backend. The key is never sent to the frontend. Settings apply when a transcription job begins. Rename now changes the display title rather than the underlying audio filename.
 
 Settings API: `GET /api/settings`, `PUT /api/settings` with `auto_delete_audio` and `auto_title` booleans.
+
+## Text sync
+
+Open **Settings → Text sync** to share titles, transcripts and notes between devices. Audio files never leave the device.
+
+- Enable sync, enter an HTTPS receiving endpoint and API key, then save. The key is stored in `grabby-backend/.env` as `GRABBY_SYNC_API_KEY` and is never returned to the browser.
+- While enabled, the app exchanges changes every 30 seconds; **Sync now** runs it on demand.
+- If the same recording was edited on two devices, both versions are kept and you choose which one to keep.
+- A local **mock server** mode lets you try sync and simulate another device, conflicts, server failures and rejected keys without a remote endpoint.
+
+![Text sync settings](docs/screenshots/settings.png)
+
+The receiver contract and design notes are in [SYNC.md](SYNC.md).
