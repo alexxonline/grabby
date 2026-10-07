@@ -1,4 +1,6 @@
 import os
+import asyncio
+import secrets
 import logging
 import sqlite3
 import threading
@@ -16,6 +18,7 @@ from pydantic import BaseModel
 
 from .recorder import recorder, RECORDINGS_DIR
 from . import database as db
+from . import sync
 from .transcription import transcribe_file
 from .titles import suggest_title, MODEL
 
@@ -49,13 +52,37 @@ def _ensure_database() -> bool:
         return _database_ready
 
 
+def _automatic_sync():
+    try:
+        if _ensure_database() and sync.settings()['enabled']:
+            run_sync()
+    finally:
+        db.close_connection()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _database_ready, _database_retry_at
     _database_ready = False
     _database_retry_at = 0.0
     await run_in_threadpool(_ensure_database)
-    yield
+    stop = asyncio.Event()
+    async def poll_sync():
+        while not stop.is_set():
+            try:
+                await run_in_threadpool(_automatic_sync)
+            except Exception:
+                pass  # Sanitized status is persisted by the sync client.
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=30)
+            except TimeoutError:
+                pass
+    worker = asyncio.create_task(poll_sync())
+    try:
+        yield
+    finally:
+        stop.set()
+        await worker
 
 
 def require_database(request: Request):
@@ -176,15 +203,17 @@ def _recording_path(filename: str) -> Path:
 
 def _recording_info(filename: str) -> RecordingInfo:
     filepath = _recording_path(filename)
+    if db._get_conn().execute('SELECT 1 FROM sync_records WHERE filename=? AND deleted_at IS NOT NULL', (filename,)).fetchone():
+        raise HTTPException(status_code=404, detail="Recording deleted")
     try:
         stat = filepath.stat() if filepath.is_file() else None
     except FileNotFoundError:
         # Automatic cleanup may finish while the recordings list is loading.
         stat = None
     transcript = db.get_transcription(filename)
-    if stat is None and transcript is None:
+    if stat is None and transcript is None and not db.get_metadata(filename):
         raise HTTPException(status_code=404, detail="Recording not found")
-    created_at = datetime.fromtimestamp(stat.st_mtime).isoformat() if stat else transcript["created_at"]
+    created_at = datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat() if stat else (transcript["created_at"] if transcript else db.get_metadata(filename)["created_at"])
     db.ensure_metadata(filename, created_at)
     metadata = db.get_metadata(filename)
     return RecordingInfo(filename=filename, name=metadata.get("title") or filepath.stem,
@@ -269,8 +298,10 @@ def list_recordings():
     RECORDINGS_DIR.mkdir(exist_ok=True)
     filenames = {f.name for ext in ("*.mp3", "*.wav") for f in RECORDINGS_DIR.glob(ext)}
     filenames.update(row["filename"] for row in db.list_transcriptions())
-    recordings = [_recording_info(filename) for filename in filenames]
-    return sorted(recordings, key=lambda r: r.created_at, reverse=True)
+    filenames.update(row[0] for row in db._get_conn().execute("SELECT filename FROM recording_metadata"))
+    deleted = {r[0] for r in db._get_conn().execute('SELECT filename FROM sync_records WHERE deleted_at IS NOT NULL')}
+    recordings = [_recording_info(filename) for filename in filenames - deleted]
+    return sorted(recordings, key=lambda r: datetime.fromisoformat(r.created_at.replace("Z", "+00:00")).timestamp(), reverse=True)
 
 
 @app.delete("/api/recordings/{filename}")
@@ -434,6 +465,84 @@ def search_transcriptions(q: str):
         )
         for r in results
     ]
+
+
+class SyncSettingsUpdate(BaseModel):
+    enabled: bool
+    endpoint: str = ""
+    mock: bool = False
+    api_key: str | None = None
+
+
+class SyncChoice(BaseModel):
+    choice: str
+
+
+@app.get("/api/sync/settings")
+def sync_settings():
+    return sync.settings()
+
+
+@app.put("/api/sync/settings")
+def update_sync_settings(body: SyncSettingsUpdate):
+    try:
+        return sync.save_settings(**body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/sync/run")
+def run_sync():
+    # Avoid overwriting recordings currently being processed/captured.
+    if recorder.is_recording or recorder.save_pending or any(v == "pending" for v in _transcribing.values()):
+        raise HTTPException(status_code=409, detail="Wait until recording and processing finish.")
+    try:
+        return sync.run()
+    except Exception:
+        raise HTTPException(status_code=400, detail=sync.settings()['error'] or "Sync unavailable.") from None
+
+
+@app.get("/api/sync/conflicts")
+def sync_conflicts():
+    return sync.conflicts()
+
+
+@app.post("/api/sync/conflicts/{recording_id}")
+def resolve_sync_conflict(recording_id: str, body: SyncChoice):
+    if recorder.is_recording or recorder.save_pending or any(v == "pending" for v in _transcribing.values()):
+        raise HTTPException(status_code=409, detail="Wait until recording and processing finish.")
+    try:
+        return sync.resolve(recording_id, body.choice)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/sync/mock/exchange")
+def mock_exchange(request: Request, body: dict):
+    if not request.client or request.client.host not in ("127.0.0.1", "::1", "testclient") or not sync.settings()['mock']:
+        raise HTTPException(status_code=404, detail="Mock receiver unavailable")
+    expected = os.getenv("GRABBY_SYNC_API_KEY", "")
+    supplied = request.headers.get("Authorization", "")
+    if not expected or not secrets.compare_digest(supplied.encode(), ("Bearer " + expected).encode()):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    try:
+        return sync.receive(body)
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid sync payload") from None
+
+
+class MockScenario(BaseModel):
+    scenario: str
+
+
+@app.post("/api/sync/mock/scenario")
+def mock_scenario(body: MockScenario):
+    try:
+        return sync.mock_scenario(body.scenario)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Mock scenario failed. Check sync status.") from None
 
 
 # ----- Static Frontend Files -----

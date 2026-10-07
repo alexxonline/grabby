@@ -1,10 +1,13 @@
 import asyncio
 import base64
+import tempfile
 import unittest
 from array import array
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from app.realtime import LiveTranscript
+from app.recorder import MeetingRecorder
 
 
 class LiveTranscriptTests(unittest.TestCase):
@@ -65,8 +68,54 @@ class LiveTranscriptTests(unittest.TestCase):
     def test_missing_key_does_not_fail_recording(self):
         live = LiveTranscript()
         with patch("app.realtime.get_client", side_effect=RuntimeError("missing key")):
-            asyncio.run(live._run())
-        self.assertTrue(all(s["status"] == "error" for s in live.snapshot()["sources"].values()))
+            live.start()
+            live._thread.join(timeout=5)
+        self.assertFalse(live._thread.is_alive())
+        for source in live.snapshot()["sources"].values():
+            self.assertEqual(source["status"], "error")
+            self.assertIn("API key", source["error"])
+
+        recorder = MeetingRecorder()
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        recorder._capture_dir = Path(temp.name)
+        recorder._current_file = "meeting"
+        recorder.notes_id = "notes"
+        recorder.live = live
+        recorder._recording = True
+        device = {"defaultSampleRate": 16000, "maxInputChannels": 1, "index": 0}
+
+        def open_stream(*_args, **_kwargs):
+            class Stream:
+                def __init__(self):
+                    self.remaining = 4
+
+                def read(self, frames, **kwargs):
+                    self.remaining -= 1
+                    if self.remaining <= 0:
+                        recorder._recording = False
+                    return b"\x01\x00" * frames
+
+                def stop_stream(self):
+                    pass
+
+                def close(self):
+                    pass
+
+            return Stream()
+
+        backend = MagicMock()
+        backend.open.side_effect = open_stream
+        with patch("app.recorder.pyaudio.PyAudio", return_value=backend), \
+                patch.object(recorder, "_get_loopback_device", return_value=device), \
+                patch.object(recorder, "_get_default_mic", return_value=device):
+            recorder._record_loop()
+        self.assertIsNone(recorder.error)
+        self.assertFalse(recorder.is_recording)
+        captured = sum((recorder._capture_dir / name).stat().st_size for name in ("loopback.pcm", "mic.pcm"))
+        self.assertGreater(captured, 0)
+        live.feed("you", b"\x00\x01" * 160, 16000, 1)
+        self.assertIsNone(recorder.error)
 
 
 if __name__ == "__main__":

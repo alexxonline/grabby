@@ -33,6 +33,30 @@ export interface Settings {
   title_model: string;
 }
 
+export interface SyncSettings {
+  enabled: boolean;
+  endpoint: string;
+  mock: boolean;
+  api_key_configured: boolean;
+  device_id: string;
+  last_success: string | null;
+  error: string | null;
+  running: boolean;
+  conflicts: number;
+}
+export interface SyncSnapshot {
+  filename: string;
+  title: string | null;
+  deleted_at: string | null;
+  transcription: { text: string } | null;
+  notes: { text: string } | null;
+}
+export interface SyncConflict {
+  recording_id: string;
+  local: SyncSnapshot;
+  server: SyncSnapshot;
+}
+
 export interface TranscriptionStatus {
   filename: string;
   title?: string | null;
@@ -63,6 +87,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  mockSyncScenario: (scenario: string) => request<{ message: string }>("/sync/mock/scenario", { method: "POST", body: JSON.stringify({ scenario }) }),
+  getSyncSettings: () => request<SyncSettings>("/sync/settings"),
+  saveSyncSettings: (settings: Pick<SyncSettings, "enabled" | "endpoint" | "mock"> & { api_key?: string }) =>
+    request<SyncSettings>("/sync/settings", { method: "PUT", body: JSON.stringify(settings) }),
+  runSync: () => request<SyncSettings>("/sync/run", { method: "POST" }),
+  getSyncConflicts: () => request<SyncConflict[]>("/sync/conflicts"),
+  resolveSyncConflict: (id: string, choice: "local" | "server") =>
+    request<SyncSettings>(`/sync/conflicts/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ choice }) }),
   getNotes: (id: string) => request<{ id: string; text: string }>(`/notes/${encodeURIComponent(id)}`),
   getRecordingNotes: (filename: string) =>
     request<{ id: string; text: string }>(`/recordings/${encodeURIComponent(filename)}/notes`),

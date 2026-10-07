@@ -12,11 +12,11 @@ test("saves recording preferences", async ({ page }) => {
 
   await autoDelete.click();
   await expect(autoDelete).toBeChecked();
-  await expect(page.getByRole("status")).toHaveText("Settings saved.");
+  await expect(page.getByRole("status").filter({ hasText: "Settings saved." })).toHaveText("Settings saved.");
 
   await autoTitle.click();
   await expect(autoTitle).toBeChecked();
-  await expect(page.getByRole("status")).toHaveText("Settings saved.");
+  await expect(page.getByRole("status").filter({ hasText: "Settings saved." })).toHaveText("Settings saved.");
 
   await page.reload();
   await expect(autoDelete).toBeChecked();

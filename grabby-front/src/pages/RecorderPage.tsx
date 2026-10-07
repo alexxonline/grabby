@@ -145,7 +145,8 @@ export function RecorderPage({ path: _path }: { path?: string }) {
           </p>
         )}
       </div>
-      {status.notes_id && (
+      {/* Keep finished details only for this visit, not from a stale polled notes ID. */}
+      {status.notes_id && (status.recording || status.save_pending || status.saving || savedFile) && (
         <RecordingTabs notesId={status.notes_id} live={status.recording}>
         {status.recording ? (
         <section class="live-transcript">

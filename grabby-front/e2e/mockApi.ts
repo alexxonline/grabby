@@ -1,8 +1,13 @@
 import type { Page, Route } from "@playwright/test";
+import type { SyncSettings, SyncConflict, SyncSnapshot } from "../src/api";
 
 export interface MockOptions {
   library?: "seeded" | "empty";
   statusFails?: boolean;
+  sync?: Partial<SyncSettings>;
+  syncConflicts?: SyncConflict[];
+  syncLoadFails?: boolean;
+  syncSaveFails?: boolean;
 }
 
 interface Recording {
@@ -179,6 +184,14 @@ export async function installGrabbyApi(page: Page, options: MockOptions = {}): P
     openrouter_configured: false,
     title_model: "openai/gpt-5.6-luna",
   };
+  const syncSettings: SyncSettings = {
+    enabled: false, endpoint: "", mock: false, api_key_configured: false,
+    device_id: "test-device", last_success: null, error: null, running: false,
+    conflicts: options.syncConflicts?.length ?? 0, ...options.sync,
+  };
+  let syncConflicts = structuredClone(options.syncConflicts ?? []);
+  let syncFailure: string | null = null;
+  let pendingSyncScenario: "remote_edit" | "conflict" | null = null;
   let pendingName = "meeting";
   let status: RecorderStatus = {
     recording: false,
@@ -214,6 +227,19 @@ export async function installGrabbyApi(page: Page, options: MockOptions = {}): P
     processing: false,
   };
 
+  const applySyncSnapshot = (snapshot: SyncSnapshot) => {
+    const recording = recordingByName(snapshot.filename);
+    if (!recording) return;
+    recording.name = snapshot.title ?? snapshot.filename;
+    if (snapshot.transcription) {
+      transcripts[snapshot.filename] = {
+        ...transcriptFor(snapshot.filename), title: snapshot.title,
+        text: snapshot.transcription.text, status: "completed",
+      };
+    }
+    if (snapshot.notes) notesFor(snapshot.filename).text = snapshot.notes.text;
+  };
+
   const readJson = (route: Route): Record<string, unknown> => {
     const raw = route.request().postData();
     if (!raw) return {};
@@ -225,6 +251,68 @@ export async function installGrabbyApi(page: Page, options: MockOptions = {}): P
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
+
+    const json = (body: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(body) });
+    if (path === "/api/sync/settings") {
+      if (method === "GET") return options.syncLoadFails ? json({ detail: "Sync settings unavailable" }, 503) : json(syncSettings);
+      if (method === "PUT") {
+        if (options.syncSaveFails) return json({ detail: "Could not save sync settings" }, 503);
+        const body = readJson(route);
+        const endpoint = String(body.endpoint ?? "");
+        const keyConfigured = typeof body.api_key === "string" ? !!body.api_key.trim() : syncSettings.api_key_configured;
+        if (!body.mock && endpoint && !endpoint.startsWith("https://")) return json({ detail: "Use an HTTPS endpoint." }, 400);
+        if (body.enabled && (!keyConfigured || (!body.mock && !endpoint))) return json({ detail: "An endpoint and API key are required to enable sync." }, 400);
+        Object.assign(syncSettings, { enabled: !!body.enabled, endpoint, mock: !!body.mock, api_key_configured: keyConfigured });
+        return json(syncSettings);
+      }
+    }
+    if (path === "/api/sync/conflicts" && method === "GET") return json(syncConflicts);
+    if (path === "/api/sync/run" && method === "POST") {
+      if (!syncSettings.enabled) return json({ detail: "Enable sync first." }, 400);
+      if (syncFailure) {
+        syncSettings.error = syncFailure === "authentication" ? "Invalid API key" : "Server unavailable";
+        syncFailure = null;
+        return json({ detail: syncSettings.error }, 400);
+      }
+      if (pendingSyncScenario) {
+        const local: SyncSnapshot = {
+          filename: "planning.mp3", title: "Local planning", deleted_at: null,
+          transcription: { text: "Alice: Local transcript" }, notes: { text: "Local notes" },
+        };
+        const server: SyncSnapshot = {
+          filename: "planning.mp3", title: "Planning from another device", deleted_at: null,
+          transcription: { text: "Alice: Remote transcript update" }, notes: { text: "Remote notes update" },
+        };
+        if (pendingSyncScenario === "remote_edit") applySyncSnapshot(server);
+        else {
+          applySyncSnapshot(local);
+          syncConflicts.push({ recording_id: "scenario-planning", local, server });
+          syncSettings.conflicts = syncConflicts.length;
+        }
+        pendingSyncScenario = null;
+      }
+      syncSettings.error = null;
+      syncSettings.last_success = "2026-10-05T15:00:00Z";
+      return json(syncSettings);
+    }
+    if (path === "/api/sync/mock/scenario" && method === "POST") {
+      const body = readJson(route);
+      if (!syncSettings.enabled || !syncSettings.mock) return json({ detail: "Enable mock sync first." }, 400);
+      if (body.scenario === "failure" || body.scenario === "authentication") syncFailure = body.scenario;
+      if (body.scenario === "remote_edit" || body.scenario === "conflict") pendingSyncScenario = body.scenario;
+      return json({ message: "Mock scenario prepared." });
+    }
+    const conflictMatch = path.match(/^\/api\/sync\/conflicts\/([^/]+)$/);
+    if (conflictMatch && method === "POST") {
+      const body = readJson(route);
+      if (body.choice !== "local" && body.choice !== "server") return json({ detail: "Choose local or server." }, 400);
+      const selected = syncConflicts.find(c => c.recording_id === decodeURIComponent(conflictMatch[1]));
+      if (!selected) return json({ detail: "Conflict not found." }, 400);
+      applySyncSnapshot(body.choice === "local" ? selected.local : selected.server);
+      syncConflicts = syncConflicts.filter(c => c.recording_id !== selected.recording_id);
+      syncSettings.conflicts = syncConflicts.length;
+      return json(syncSettings);
+    }
 
     if (options.statusFails && path === "/api/status") {
       return { status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Recorder unavailable" }) };

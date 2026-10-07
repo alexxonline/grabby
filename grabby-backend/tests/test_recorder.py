@@ -1,7 +1,9 @@
 """Disk-backed capture and bounded-memory export, without audio hardware."""
+import math
 import threading
 import audioop
 import shutil
+import subprocess
 import tempfile
 import tracemalloc
 import unittest
@@ -236,12 +238,22 @@ class RecorderTests(unittest.TestCase):
     def test_start_response_does_not_claim_recording_after_immediate_failure(self):
         from app import main
 
+        def run_before_start_returns(thread):
+            thread._target(*thread._args, **thread._kwargs)
+
         with patch.object(main, "recorder", self.recorder), \
-                patch.object(self.recorder, "start"), \
-                patch.object(self.recorder, "_error", "Audio capture failed: no device"):
+                patch("app.recorder.RECORDINGS_DIR", self.root), \
+                patch("app.recorder.db.get_transcription", return_value=None), \
+                patch("app.recorder.db.create_notes", return_value={"id": "notes"}), \
+                patch("app.recorder.LiveTranscript") as live, \
+                patch("app.recorder.pyaudio.PyAudio", side_effect=OSError("no device")), \
+                patch("app.recorder.threading.Thread.start", run_before_start_returns), \
+                self.assertLogs("app.recorder", level="ERROR"):
             status = main.start_recording()
         self.assertFalse(status.recording)
         self.assertIn("no device", status.error)
+        self.assertFalse(self.recorder.is_recording)
+        live.return_value.stop.assert_called_once()
 
     def test_resampling_matches_continuous_conversion_and_preserves_longer_tail(self):
         self.recorder._mic_rate = 8000
@@ -385,9 +397,41 @@ class RecorderTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg unavailable")
     def test_real_mp3_export(self):
-        self.write_pcm("loopback.pcm", [1000] * 16000)
-        self.write_pcm("mic.pcm", [2000] * 16000)
+        rate = 16000
+        loopback = [int(8000 * math.sin(2 * math.pi * 440 * i / rate)) for i in range(rate)]
+        mic = [int(4000 * math.sin(2 * math.pi * 880 * i / rate)) for i in range(rate)]
+        self.write_pcm("loopback.pcm", loopback)
+        self.write_pcm("mic.pcm", mic)
         with patch("app.recorder.RECORDINGS_DIR", self.root), patch("app.recorder.db.attach_notes"):
             output = Path(self.recorder._mix_and_save())
         self.assertEqual(output.suffix, ".mp3")
-        self.assertGreater(output.stat().st_size, 100)
+        decoded = self.root / "decoded.wav"
+        subprocess.run(
+            [shutil.which("ffmpeg"), "-nostdin", "-y", "-loglevel", "error", "-i", str(output), str(decoded)],
+            check=True, stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        with wave.open(str(decoded), "rb") as audio:
+            self.assertEqual(audio.getnchannels(), 1)
+            self.assertEqual(audio.getframerate(), rate)
+            duration = audio.getnframes() / audio.getframerate()
+            samples = array("h", audio.readframes(audio.getnframes()))
+        self.assertGreater(duration, 0.85)
+        self.assertLess(duration, 1.25)
+        loopback_level = self.tone_level(samples, rate, 440)
+        mic_level = self.tone_level(samples, rate, 880)
+        unrelated = self.tone_level(samples, rate, 2000)
+        self.assertGreater(loopback_level, 1500)
+        self.assertGreater(mic_level, 700)
+        self.assertGreater(loopback_level, unrelated * 5)
+        self.assertGreater(mic_level, unrelated * 5)
+
+    @staticmethod
+    def tone_level(samples, rate, freq):
+        step = 2 * math.pi * freq / rate
+        sine = cosine = 0.0
+        for index, sample in enumerate(samples):
+            angle = step * index
+            sine += sample * math.sin(angle)
+            cosine += sample * math.cos(angle)
+        return math.hypot(sine, cosine) / len(samples)

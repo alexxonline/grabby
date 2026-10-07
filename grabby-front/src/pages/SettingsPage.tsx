@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { api } from "../api";
+import { SyncSettingsPanel } from "../components/SyncSettingsPanel";
 import type { Settings } from "../api";
 
 export function SettingsPage({ path: _path }: { path?: string }) {
@@ -57,6 +58,7 @@ export function SettingsPage({ path: _path }: { path?: string }) {
           disabled={saving} onChange={() => toggle("auto_title")} />
       </div>
     </div>}
+    <SyncSettingsPanel />
     <p role="status">{saving ? "Saving…" : saved ? "Settings saved." : ""}</p>
   </div>;
 }

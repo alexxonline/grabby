@@ -1,10 +1,18 @@
-import Router from "preact-router";
+import Router, { route } from "preact-router";
+import { useEffect } from "preact/hooks";
 import { RecorderPage } from "./pages/RecorderPage";
 import { RecordingsPage } from "./pages/RecordingsPage";
 import { TranscriptionPage } from "./pages/TranscriptionPage";
 import { SearchPage } from "./pages/SearchPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import "./app.css";
+
+function RedirectHome(_props: { default?: boolean }) {
+  useEffect(() => {
+    route("/", true);
+  }, []);
+  return null;
+}
 
 function Nav() {
   return (
@@ -31,6 +39,7 @@ export function App() {
           <SearchPage path="/search" />
           <SettingsPage path="/settings" />
           <TranscriptionPage path="/transcription/:filename" />
+          <RedirectHome default />
         </Router>
       </main>
     </>

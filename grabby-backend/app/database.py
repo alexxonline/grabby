@@ -4,7 +4,7 @@ import sqlite3
 import threading
 import uuid
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 DB_PATH = Path(__file__).resolve().parent.parent / "grabby.db"
 
@@ -87,6 +87,8 @@ def init_db() -> None:
         END;
     """)
     conn.commit()
+    from .sync import initialize
+    initialize(conn)
 
 
 def save_transcription(filename: str, text: str, language: str | None = None) -> int:
@@ -96,7 +98,7 @@ def save_transcription(filename: str, text: str, language: str | None = None) ->
     conn.execute("DELETE FROM transcriptions WHERE filename = ?", (filename,))
     cur = conn.execute(
         "INSERT INTO transcriptions (filename, text, language, created_at) VALUES (?, ?, ?, ?)",
-        (filename, text, language, datetime.utcnow().isoformat()),
+        (filename, text, language, datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
     return cur.lastrowid  # type: ignore[return-value]
