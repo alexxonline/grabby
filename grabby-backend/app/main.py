@@ -1,6 +1,7 @@
 import os
 import asyncio
 import secrets
+import shutil
 import logging
 import sqlite3
 import threading
@@ -302,6 +303,20 @@ def list_recordings():
     deleted = {r[0] for r in db._get_conn().execute('SELECT filename FROM sync_records WHERE deleted_at IS NOT NULL')}
     recordings = [_recording_info(filename) for filename in filenames - deleted]
     return sorted(recordings, key=lambda r: datetime.fromisoformat(r.created_at.replace("Z", "+00:00")).timestamp(), reverse=True)
+
+
+@app.get("/api/storage")
+def get_storage():
+    RECORDINGS_DIR.mkdir(exist_ok=True)
+    used = 0
+    for f in RECORDINGS_DIR.iterdir():
+        try:
+            if f.is_file():
+                used += f.stat().st_size
+        except FileNotFoundError:
+            pass
+    disk = shutil.disk_usage(RECORDINGS_DIR)
+    return {"used_bytes": used, "disk_total_bytes": disk.total, "disk_free_bytes": disk.free}
 
 
 @app.delete("/api/recordings/{filename}")

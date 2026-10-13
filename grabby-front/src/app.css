@@ -781,3 +781,31 @@
 .sync-version p { margin: .4rem 0 0; font-size: .9rem; overflow-wrap: anywhere; }
 .sync-version-title { font-weight: 600; }
 .sync-version pre { margin: .5rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; font: inherit; font-size: .9rem; }
+
+.storage-bar {
+  margin-bottom: 16px;
+}
+
+.storage-bar-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.storage-bar-track {
+  height: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.storage-bar-fill {
+  height: 100%;
+  min-width: 2px;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}

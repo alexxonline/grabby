@@ -26,6 +26,12 @@ export interface RecordingInfo {
   processing_error: string | null;
 }
 
+export interface StorageInfo {
+  used_bytes: number;
+  disk_total_bytes: number;
+  disk_free_bytes: number;
+}
+
 export interface Settings {
   auto_delete_audio: boolean;
   auto_title: boolean;
@@ -117,6 +123,8 @@ export const api = {
     request<RecordingStatus>("/stop", { method: "POST" }),
 
   listRecordings: () => request<RecordingInfo[]>("/recordings"),
+
+  getStorage: () => request<StorageInfo>("/storage"),
 
   deleteRecording: (filename: string) =>
     request<{ detail: string }>(`/recordings/${encodeURIComponent(filename)}`, {

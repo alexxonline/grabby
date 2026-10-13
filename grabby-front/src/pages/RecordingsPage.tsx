@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 import { route } from "preact-router";
 import { api } from "../api";
-import type { RecordingInfo, TranscriptionStatus } from "../api";
+import type { RecordingInfo, StorageInfo, TranscriptionStatus } from "../api";
 import { AudioPlayer } from "../components/AudioPlayer";
 
 export function RecordingsPage({ path: _path }: { path?: string }) {
@@ -12,6 +12,7 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
   const [pollError, setPollError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playingRec, setPlayingRec] = useState<RecordingInfo | null>(null);
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
 
   // Transcription state
   const [transcriptions, setTranscriptions] = useState<Record<string, TranscriptionStatus>>({});
@@ -33,6 +34,11 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
   useEffect(() => {
     fetchRecordings();
   }, []);
+
+  // Refresh storage usage whenever the recordings list changes (add, delete, processing done).
+  useEffect(() => {
+    api.getStorage().then(setStorage).catch(() => {});
+  }, [recordings]);
 
   useEffect(() => {
     if (!recordings.some(rec => rec.processing)) return;
@@ -150,12 +156,30 @@ export function RecordingsPage({ path: _path }: { path?: string }) {
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    if (bytes < 1024 ** 3) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
   };
+
+  const storagePercent = storage
+    ? Math.min(100, (storage.used_bytes / (storage.used_bytes + storage.disk_free_bytes || 1)) * 100)
+    : 0;
 
   return (
     <div class="page">
       <h1>Recordings</h1>
+
+      {storage && (
+        <div class="storage-bar" data-testid="storage-bar">
+          <div class="storage-bar-label">
+            <span>Storage used by recordings: {formatSize(storage.used_bytes)}</span>
+            <span>{formatSize(storage.disk_free_bytes)} free on disk</span>
+          </div>
+          <div class="storage-bar-track" role="progressbar" aria-label="Recordings storage"
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(storagePercent)}>
+            <div class="storage-bar-fill" style={{ width: `${storagePercent}%` }} />
+          </div>
+        </div>
+      )}
 
       {error && <p class="error">{error}</p>}
       {pollError && <p class="error">{pollError}</p>}

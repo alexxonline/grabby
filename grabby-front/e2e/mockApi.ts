@@ -392,6 +392,11 @@ export async function installGrabbyApi(page: Page, options: MockOptions = {}): P
       return { status: 200, contentType: "application/json", body: JSON.stringify(sortedRecordings()) };
     }
 
+    if (method === "GET" && path === "/api/storage") {
+      const used = sortedRecordings().reduce((sum, rec) => sum + rec.size_bytes, 0);
+      return { status: 200, contentType: "application/json", body: JSON.stringify({ used_bytes: used, disk_total_bytes: 500e9, disk_free_bytes: 200e9 }) };
+    }
+
     if (method === "GET" && path === "/api/transcriptions/search") {
       const terms = (url.searchParams.get("q") ?? "").trim().toLowerCase().split(/\s+/).filter(Boolean);
       const results = terms.length === 0 ? [] : Object.values(transcripts).flatMap((item) => {
