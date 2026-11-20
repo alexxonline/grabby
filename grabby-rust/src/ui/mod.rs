@@ -14,11 +14,11 @@ mod settings;
 mod transcription;
 
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rune::tok::{self, Theme, radius, space, type_};
-use rune::{App, AppHandle, AppSpec, Color, Cx, El, ScrollSpec, TextStyle, Tx, col, row, text};
-use rune_kit::{Button, ButtonVariant, ControlSize, Kit, SegmentedControl};
+use rune::{App, AppHandle, AppSpec, Color, Cx, El, Key, KeyEvent, ScrollSpec, TextStyle, Tx, col, row, text};
+use rune_kit::{Button, ButtonVariant, ControlSize, Kit, SegmentedControl, Toast, ToastRegion};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -44,6 +44,15 @@ pub struct Ui {
     pub player: Option<player::Player>,
     /// Auto follows the Windows app mode.
     pub appearance: crate::core::Appearance,
+    /// A short confirmation shown bottom-right until it times out or is closed.
+    pub toast: Option<(String, Instant)>,
+}
+
+const TOAST_SECONDS: u64 = 4;
+
+/// Shows a brief confirmation ("Recording discarded").
+pub fn notify(s: &mut Ui, message: impl Into<String>) {
+    s.toast = Some((message.into(), Instant::now()));
 }
 
 fn init() -> Ui {
@@ -60,6 +69,7 @@ fn init() -> Ui {
         detail_tab: 0,
         player: None,
         appearance: crate::core::get_appearance(),
+        toast: None,
     };
     recorder::enter(&mut ui);
     ui
@@ -106,7 +116,36 @@ fn poll(s: &mut Ui, _clock: f64, tx: &mut Tx) -> bool {
         Page::Transcription => transcription::tick(s),
     };
     changed |= player::tick(s);
+    if s.toast.as_ref().is_some_and(|(_, at)| at.elapsed() >= Duration::from_secs(TOAST_SECONDS)) {
+        s.toast = None;
+        changed = true;
+    }
     changed
+}
+
+/// Global shortcuts: Ctrl+R start/stop, Ctrl+F search, Ctrl+1-4 pages, Esc cancels a delete prompt.
+fn on_key(s: &mut Ui, ev: &KeyEvent, _: &mut Tx) -> bool {
+    if ev.key == Key::Escape {
+        return recordings::cancel_confirm(s);
+    }
+    if !ev.mods.cmd || ev.mods.alt {
+        return false;
+    }
+    if ev.is_command('r') {
+        recorder::toggle(s);
+        return true;
+    }
+    for (c, page) in [('1', Page::Recorder), ('2', Page::Recordings), ('3', Page::Search), ('4', Page::Settings)] {
+        if ev.is_command(c) {
+            navigate(s, page);
+            return true;
+        }
+    }
+    if ev.is_command('f') {
+        navigate(s, Page::Search);
+        return true;
+    }
+    false
 }
 
 fn on_close(s: &mut Ui, _: &mut Tx) {
@@ -253,10 +292,17 @@ fn view(s: &Ui, cx: &mut Cx<Ui>) -> El {
     if let Some(pl) = &s.player {
         window = window.child(player::view(pl, &p));
     }
+    if let Some((message, _)) = &s.toast {
+        let toast = Toast::new("toast", message.clone()).on_close(|s: &mut Ui| s.toast = None).build(&p.k);
+        window = window.child(ToastRegion::new().toast(toast).build(&p.k));
+    }
     window
 }
 
 pub fn run() {
+    // Taskbar/title-bar icon: the exe resource embedded by build.rs (winresource uses id 1).
+    #[cfg(windows)]
+    rune::set_app_icon_resource(1);
     let app = App::new(AppSpec::<Ui> {
         poll: Some(poll),
         // Headless snapshots of each page: `grabby --snap out.png --scene settings`.
@@ -270,7 +316,9 @@ pub fn run() {
                 s.appearance = crate::core::Appearance::Light;
             }),
             ("recorder-light", |s| s.appearance = crate::core::Appearance::Light),
+            ("toast", |s| notify(s, "Recording discarded")),
         ],
+        on_key: Some(on_key),
         min_size: Some((640.0, 480.0)),
         ..AppSpec::new("Grabby", (1040.0, 760.0), init, view)
     })

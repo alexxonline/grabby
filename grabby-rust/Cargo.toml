@@ -36,6 +36,9 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32
 [dev-dependencies]
 tempfile = "3"
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 # Cargo doesn't apply a dependency's [patch]; Rune requires apps to carry its vendored patches.
 # They live in Rune's repository under vendor/, so patch them from the same git revision.
 [patch.crates-io]

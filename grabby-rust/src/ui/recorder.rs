@@ -7,7 +7,7 @@ use rune::{El, ScrollSpec, Span, TextEdit, TextStyle, col, el, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize, TextInput};
 
 use super::notes::{self, Source};
-use super::{P, Page, Ui, card, error, h2, link, muted, navigate, recording_tabs, spawn_task};
+use super::{P, Page, Ui, card, error, h2, link, muted, navigate, notify, recording_tabs, spawn_task};
 use crate::core;
 use crate::recorder::RecorderStatus;
 
@@ -31,6 +31,9 @@ pub struct RecorderPage {
 }
 
 pub fn enter(s: &mut Ui) {
+    // The "saved" message only belongs to the visit right after stopping.
+    s.rec.saved_file = None;
+    s.rec.saved_duration = None;
     s.rec.last_poll = None;
     tick(s);
 }
@@ -126,10 +129,26 @@ fn handle_discard(s: &mut Ui) {
             Ok(status) => {
                 s.rec.saved_file = None;
                 s.rec.status = status;
+                notify(s, "Recording discarded");
             }
             Err(e) => s.rec.error = Some(e.detail),
         }
     });
+}
+
+/// Ctrl+R: start, stop or retry the save, like the main button.
+pub fn toggle(s: &mut Ui) {
+    if s.page != Page::Recorder {
+        navigate(s, Page::Recorder);
+    }
+    if s.rec.operation.is_some() || s.rec.status.saving {
+        return;
+    }
+    if s.rec.status.recording || s.rec.status.save_pending {
+        handle_stop(s);
+    } else {
+        handle_start(s);
+    }
 }
 
 fn handle_stop(s: &mut Ui) {
@@ -145,6 +164,7 @@ fn handle_stop(s: &mut Ui) {
             Ok(status) => {
                 s.rec.saved_file = status.filename.clone();
                 s.rec.status = status;
+                notify(s, "Recording saved");
             }
             Err(e) => {
                 s.rec.saved_duration = None;

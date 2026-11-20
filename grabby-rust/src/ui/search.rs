@@ -94,8 +94,17 @@ pub fn view(s: &Ui, p: &P) -> El {
     if let Some(e) = &q.error {
         page = page.child(error(p, "error", e.clone()));
     }
+    if !q.searched && q.results.is_empty() {
+        page = page.child(muted(
+            p,
+            "hint",
+            "Search the text of every transcript. Try a name, a topic or a phrase someone said.",
+        ));
+    }
     if q.searched && q.results.is_empty() {
-        page = page.child(muted(p, "empty", format!("No results found for \"{}\"", q.searched_query)));
+        page = page
+            .child(muted(p, "empty", format!("No results found for \"{}\"", q.searched_query)))
+            .child(muted(p, "empty-hint", "Try different words, or check that the recording has been transcribed."));
     }
     if !q.results.is_empty() {
         let mut list = col().key("search-results").w_full().gap(space::S2).role("list");

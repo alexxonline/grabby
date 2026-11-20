@@ -7,7 +7,7 @@ use rune::tok::{space, type_};
 use rune::{El, FileDialogOptions, Key, TextEdit, Tx, col, row, text};
 use rune_kit::{ButtonVariant, Progress, SegmentedControl, Spinner, TextInput};
 
-use super::{P, Ui, button, button_tx, card, error, h1, muted, open_transcription, player};
+use super::{P, Page, Ui, button, button_tx, card, error, h1, muted, navigate, notify, open_transcription, player};
 use crate::core::{self, RecordingInfo, StorageInfo, TranscriptionStatus};
 use crate::timefmt;
 
@@ -51,6 +51,11 @@ pub fn enter(s: &mut Ui) {
     s.recs.loading = true;
     s.recs.confirm_delete = None;
     fetch(s);
+}
+
+/// Esc closes an open delete prompt; true when there was one.
+pub fn cancel_confirm(s: &mut Ui) -> bool {
+    s.recs.confirm_delete.take().is_some()
 }
 
 fn fetch(s: &mut Ui) {
@@ -158,6 +163,7 @@ fn handle_delete(s: &mut Ui, filename: &str) {
             s.recs.list.retain(|r| r.filename != filename);
             s.recs.transcriptions.remove(filename);
             after_list_change(s);
+            notify(s, "Recording deleted");
         }
         Err(e) => s.recs.error = Some(e.detail),
     }
@@ -174,6 +180,7 @@ fn rename_confirm(s: &mut Ui) {
             }
             s.recs.editing = None;
             s.recs.edit_name = TextEdit::default();
+            notify(s, "Recording renamed");
         }
         Err(e) => s.recs.error = Some(e.detail),
     }
@@ -201,6 +208,8 @@ fn download(s: &mut Ui, tx: &mut Tx, filename: String) {
         Ok(Some(target)) => {
             if let Err(e) = std::fs::copy(&source, &target) {
                 s.recs.error = Some(format!("Could not save the download: {e}"));
+            } else {
+                notify(s, "Recording downloaded");
             }
         }
         Ok(None) => {}
@@ -581,11 +590,24 @@ pub fn view(s: &Ui, p: &P) -> El {
     if r.loading {
         page = page.child(muted(p, "loading", "Loading recordings…"));
     } else if r.list.is_empty() {
-        page = page.child(muted(
-            p,
-            "empty",
-            "No recordings yet. Start a recording first!",
-        ));
+        page = page.child(
+            card(p, "empty")
+                .items_center()
+                .child(super::h2(p, "empty-title", "No recordings yet"))
+                .child(muted(
+                    p,
+                    "empty-hint",
+                    "Record a meeting and it will show up here with its transcript. Press Ctrl+R to start.",
+                ))
+                .child(button(
+                    p,
+                    "empty-start",
+                    "Go to Recorder",
+                    ButtonVariant::Submit,
+                    false,
+                    |s: &mut Ui| navigate(s, Page::Recorder),
+                )),
+        );
     } else {
         page = page.child(sort_filter_bar(r, p));
         let shown = visible(r);
