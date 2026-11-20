@@ -723,6 +723,28 @@ mod tests {
     }
 
     #[test]
+    fn discards_unsaved_recording() {
+        let recorder = MeetingRecorder::default();
+        assert!(recorder.discard_pending().is_err());
+
+        let dir = tempfile::tempdir().unwrap();
+        let capture = dir.path().join(".capture-x");
+        std::fs::create_dir(&capture).unwrap();
+        std::fs::write(capture.join("mic.pcm"), [0u8; 4]).unwrap();
+        {
+            let mut s = recorder.lock();
+            s.capture_dir = Some(capture.clone());
+            s.current_file = Some("x".into());
+            s.save_pending = true;
+            s.error = Some("Could not save recording".into());
+        }
+        recorder.discard_pending().unwrap();
+        assert!(!capture.exists());
+        let status = recorder.status();
+        assert!(!status.save_pending && status.error.is_none() && status.filename.is_none());
+    }
+
+    #[test]
     fn mixes_tracks_of_different_formats() {
         let dir = tempfile::tempdir().unwrap();
         let p = Params { lb_rate: 8000, lb_channels: 2, mic_rate: 4000, mic_channels: 1 };
