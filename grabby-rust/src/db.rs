@@ -306,6 +306,10 @@ pub fn attach_notes(notes_id: &str, filename: &str) -> DbResult<()> {
     with_conn(|conn| conn.execute("UPDATE recording_notes SET filename = ? WHERE id = ?", [filename, notes_id]).map(|_| ()))
 }
 
+pub fn delete_notes(notes_id: &str) -> DbResult<()> {
+    with_conn(|conn| conn.execute("DELETE FROM recording_notes WHERE id = ?", [notes_id]).map(|_| ()))
+}
+
 pub fn get_notes(notes_id: &str) -> DbResult<Option<Notes>> {
     with_conn(|conn| {
         conn.query_row("SELECT id, text FROM recording_notes WHERE id = ?", [notes_id], |r| Ok(Notes { id: r.get(0)?, text: r.get(1)? }))

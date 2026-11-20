@@ -321,6 +321,11 @@ pub fn stop_recording() -> ApiResult<RecorderStatus> {
     Ok(RecorderStatus { recording: false, filename: Some(name), notes_id: RECORDER.notes_id(), ..Default::default() })
 }
 
+pub fn discard_recording() -> ApiResult<RecorderStatus> {
+    RECORDER.discard_pending().map_err(|e| ApiError::new(409, e.to_string()))?;
+    Ok(get_status())
+}
+
 pub fn get_recording_notes(filename: &str) -> ApiResult<db::Notes> {
     require_database()?;
     recording_info(filename)?;

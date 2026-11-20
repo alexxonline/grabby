@@ -100,8 +100,25 @@ fn handle_start(s: &mut Ui) {
     );
 }
 
+fn handle_discard(s: &mut Ui) {
+    s.rec.error = None;
+    s.rec.status.error = None;
+    s.rec.operation = Some(Operation::Stopping);
+    spawn_task(core::discard_recording, |s, result| {
+        s.rec.operation = None;
+        match result {
+            Ok(status) => {
+                s.rec.saved_file = None;
+                s.rec.status = status;
+            }
+            Err(e) => s.rec.error = Some(e.detail),
+        }
+    });
+}
+
 fn handle_stop(s: &mut Ui) {
     s.rec.error = None;
+    s.rec.status.error = None;
     s.rec.operation = Some(Operation::Stopping);
     spawn_task(core::stop_recording, |s, result| {
         s.rec.operation = None;
@@ -245,6 +262,16 @@ pub fn view(s: &Ui, p: &P) -> El {
             .build(&p.k)
             .key("record-button"),
     );
+    if st.save_pending && !st.recording && !busy {
+        recorder_card = recorder_card.child(
+            Button::new("Discard Recording")
+                .variant(ButtonVariant::Danger)
+                .control_size(ControlSize::Large)
+                .on_press(|s: &mut Ui| handle_discard(s))
+                .build(&p.k)
+                .key("discard-button"),
+        );
+    }
     if let Some(e) = r.error.as_ref().or(st.error.as_ref()) {
         recorder_card = recorder_card.child(error(p, "recorder-error", e.clone()));
     }

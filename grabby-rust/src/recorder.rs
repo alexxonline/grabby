@@ -269,6 +269,7 @@ impl MeetingRecorder {
             self.recording.store(false, Ordering::SeqCst);
             s.save_pending = true;
             s.saving = true;
+            s.error = None;
             (s.thread.take(), s.live.clone())
         };
         let result = (|| -> Result<PathBuf, String> {
@@ -302,6 +303,36 @@ impl MeetingRecorder {
                 Err(RecorderError::Conflict(message))
             }
         }
+    }
+
+    /// Throw away a recording that could not be saved (captured audio, any partial export and its notes).
+    pub fn discard_pending(&self) -> Result<(), RecorderError> {
+        let mut s = self.lock();
+        if self.is_recording() || s.saving || thread_alive(&s.thread) {
+            return Err(RecorderError::Conflict("Wait for the recording to finish stopping".into()));
+        }
+        if !s.save_pending {
+            return Err(RecorderError::Conflict("No unsaved recording to discard".into()));
+        }
+        if let Some(dir) = s.capture_dir.take() {
+            std::fs::remove_dir_all(&dir).map_err(|e| {
+                s.capture_dir = Some(dir.clone());
+                RecorderError::Conflict(format!("Could not discard recording: {e}"))
+            })?;
+        }
+        if let Some(out) = s.saved_output.take() {
+            let _ = std::fs::remove_file(out);
+        }
+        if let Some(id) = s.notes_id.take() {
+            let _ = db::delete_notes(&id);
+        }
+        s.save_pending = false;
+        s.error = None;
+        s.current_file = None;
+        s.started_at = None;
+        s.live = None;
+        s.thread = None;
+        Ok(())
     }
 
     fn record_loop(&'static self) {
