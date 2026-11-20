@@ -1,0 +1,56 @@
+[package]
+name = "grabby"
+version = "0.1.0"
+edition = "2024"
+description = "Local meeting recorder and transcription app (Rust + Rune port of Grabby)"
+license = "MIT"
+
+[[bin]]
+name = "grabby"
+path = "src/main.rs"
+
+[dependencies]
+# UI: Rune is pre-release and only published on git; pin a `dev` revision (never rewritten).
+rune = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956", features = ["native-file-dialog"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
+
+rusqlite = { version = "0.43", features = ["bundled"] }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "blocking", "json", "multipart", "charset", "http2"] }
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+rodio = { version = "0.23", default-features = false, features = ["playback", "symphonia-mp3", "symphonia-wav"] }
+cpal = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+base64 = "0.23"
+dotenvy = "0.15"
+url = "2.5"
+thiserror = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# Cargo doesn't apply a dependency's [patch]; Rune requires apps to carry its vendored patches.
+# They live in Rune's repository under vendor/, so patch them from the same git revision.
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
+
+[profile.release]
+codegen-units = 16

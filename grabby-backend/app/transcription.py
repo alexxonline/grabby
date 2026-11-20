@@ -1,4 +1,4 @@
-"""ElevenLabs Scribe v2 transcription service."""
+"""ElevenLabs Scribe v3 transcription service."""
 
 import os
 import logging
@@ -21,7 +21,7 @@ def get_client() -> ElevenLabs:
 
 def transcribe_file(filepath: Path, language_code: str | None = None) -> dict:
     """
-    Transcribe an audio file using ElevenLabs Scribe v2 with speaker diarization.
+    Transcribe an audio file using ElevenLabs Scribe v3 with speaker diarization.
 
     Returns:
         dict with keys:
@@ -34,7 +34,7 @@ def transcribe_file(filepath: Path, language_code: str | None = None) -> dict:
     with open(filepath, "rb") as f:
         transcription = client.speech_to_text.convert(
             file=f,
-            model_id="scribe_v2",
+            model_id="scribe_v3",
             tag_audio_events=False,
             language_code=language_code,
             diarize=True,

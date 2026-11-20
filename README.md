@@ -17,7 +17,7 @@ It records:
 
 Then it lets you:
 - manage recordings (play, rename, delete)
-- transcribe recordings with ElevenLabs Scribe v2
+- transcribe recordings with ElevenLabs Scribe v3
 - edit transcripts (including speaker renaming) and keep notes per recording
 - search across all transcripts with SQLite FTS5
 - optionally auto-delete audio and auto-title recordings (see [Recording settings](#recording-settings))

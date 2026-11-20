@@ -61,7 +61,7 @@ class LiveTranscript:
         connection = None
         try:
             connection = await asyncio.wait_for(get_client().speech_to_text.realtime.connect({
-                "model_id": "scribe_v2_realtime", "audio_format": AudioFormat.PCM_16000,
+                "model_id": "scribe_v3_live", "audio_format": AudioFormat.PCM_16000,
                 "sample_rate": 16000, "commit_strategy": CommitStrategy.VAD,
             }), timeout=10)
             connection.on(RealtimeEvents.PARTIAL_TRANSCRIPT, lambda data: self._transcript(source, data))

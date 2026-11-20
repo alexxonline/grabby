@@ -51,7 +51,7 @@ class LiveTranscriptTests(unittest.TestCase):
                 closed.append(True)
 
         async def connect(options):
-            self.assertEqual(options["model_id"], "scribe_v2_realtime")
+            self.assertEqual(options["model_id"], "scribe_v3_live")
             self.assertEqual(options["sample_rate"], 16000)
             return Connection()
 
