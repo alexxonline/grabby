@@ -1,11 +1,11 @@
-# Text sync plan and API contract
+# Text sync design and receiver contract
 
 ## Implementation steps
 1. Add stable recording UUIDs and a persistent device UUID; track UTC update times, local generations, server revisions and deletion tombstones. Backfill existing recordings. Group complete text snapshots by filename, with recording_id as the cross-device identity.
-2. Add Settings controls: enable sync, HTTPS receiving endpoint, API key, explicit local mock mode, connection status, last success, Sync now, and conflict resolution. Store the API key only in backend .env as GRABBY_SYNC_API_KEY; never return it or sync it.
+2. Add Settings controls: enable sync, HTTPS receiving endpoint, API key, explicit local mock mode, connection status, last success, Sync now, and conflict resolution. Store the API key only encrypted (DPAPI, `configs.dat`); never display it again or sync it.
 3. Exchange text snapshots in both directions. Poll every 30 seconds while enabled; retry safely, protect edits made during uploads, and preserve both conflicting versions until the user chooses one.
 4. Provide a persistent local mock receiver using the same contract. Test multiple devices, retries, invalid keys, server failures, deletions, filename collisions and conflicts from the app.
-5. Run backend regression tests and build the frontend.
+5. Run `cargo test` and build the release binary.
 
 ## Synced fields
 - recording_metadata: filename, title, created_at.
@@ -87,15 +87,16 @@ Response:
 - Changing endpoint or mock mode resets cursor/revisions and republishes local snapshots. API-key rotation keeps the namespace; use a distinct endpoint when switching accounts. Previously synchronized local snapshots remain local when changing servers.
 - Sync is deferred while recording, saving or transcription is active. Local settings are never synchronized.
 
-## Local API
-- GET/PUT /api/sync/settings: enabled, endpoint, mock; PUT optionally accepts api_key. GET returns only api_key_configured plus device/status information.
-- POST /api/sync/run: manual exchange.
-- GET /api/sync/conflicts: local and server snapshots.
-- POST /api/sync/conflicts/{recording_id}: {"choice":"local"} or {"choice":"server"}.
-- POST /api/sync/mock/exchange: receiving contract above; loopback clients only, mock mode required, authenticates against the configured key.
-- POST /api/sync/mock/scenario: {"scenario":"remote_edit"}, "conflict", "failure", or "authentication". Requires enabled mock sync.
+## Local service API
+The UI calls these functions in `grabby-rust/src/sync.rs` directly; there is no HTTP server.
+- `settings()` / `save_settings(enabled, endpoint, mock, api_key)`: the key is optional on save. Settings return only whether a key is configured plus device/status information.
+- `run()`: manual exchange.
+- `conflicts()`: local and server snapshots.
+- `resolve(recording_id, choice)`: choice is `"local"` or `"server"`.
+- `receive(body)`: the receiving contract above, used by the in-process mock; mock mode required, authenticates against the configured key.
+- `mock_scenario(scenario)`: `"remote_edit"`, `"conflict"`, `"failure"` or `"authentication"`. Requires enabled mock sync.
 
-The mock transport invokes the receiver directly without network access. It uses persistent isolated tables in the local database. The reference mock is a single test account; production hosting must keep it disabled or bind the app to loopback. HTTPS termination and production account authentication belong to the receiving server.
+The mock transport invokes the receiver directly without network access. It uses persistent isolated tables in the local database. The reference mock is a single test account; production use must keep it disabled. HTTPS termination and production account authentication belong to the receiving server.
 
 ## Test from Settings
 Open Settings > Text sync. Select local mock server, enter any test key, enable sync, and save. Click Test mock sync. Scenario buttons prepare another device's edit, conflicting edits, a one-time rejected key, or a one-time server failure. Click Test mock sync again to observe the result or recovery. These scenarios use local text snapshots; conflict choices apply to those recordings. Audio is never uploaded.

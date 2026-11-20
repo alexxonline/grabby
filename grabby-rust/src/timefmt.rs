@@ -1,4 +1,4 @@
-//! ISO-8601 helpers matching Python's `datetime.isoformat()` / `fromisoformat()` usage.
+//! ISO-8601 timestamp formatting and parsing helpers.
 
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
@@ -87,7 +87,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_python_formats() {
+    fn parses_iso_formats() {
         assert_eq!(to_utc("2026-10-05T14:00:00Z", false).unwrap(), "2026-10-05T14:00:00+00:00");
         assert_eq!(to_utc("2026-10-05T16:00:00.250000+02:00", false).unwrap(), "2026-10-05T14:00:00.250000+00:00");
         assert_eq!(to_utc("2026-10-05 14:00:00", false).unwrap(), "2026-10-05T14:00:00+00:00");

@@ -1,4 +1,4 @@
-//! The Rune UI: a port of the Preact frontend (`grabby-front/src`).
+//! The Rune UI: pages and components.
 //!
 //! Pages call the service layer in [`crate::core`] directly instead of over HTTP. Slow work
 //! (starting/stopping capture, sync, transcription requests) runs on worker threads and lands

@@ -1,9 +1,9 @@
-//! ElevenLabs Scribe v3 transcription service (port of `app/transcription.py`).
+//! ElevenLabs Scribe v3 transcription service.
 //!
-//! Sends the same request the official Python SDK (`elevenlabs==2.68.0`) sends for
-//! `client.speech_to_text.convert(file=f, model_id="scribe_v3", tag_audio_events=False,
-//! language_code=None, diarize=True)`: a multipart POST to `/v1/speech-to-text` with the
-//! `xi-api-key` header, a 240 s timeout and two retries on 408/409/429/5xx.
+//! Sends the request the official ElevenLabs SDK (version 2.68.0) sends for
+//! `model_id=scribe_v3`, `tag_audio_events=false` and `diarize=true`: a multipart POST to
+//! `/v1/speech-to-text` with the `xi-api-key` header, a 240 s timeout and two retries on
+//! 408/409/429/5xx.
 
 use std::path::Path;
 use std::time::Duration;
@@ -160,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_speakers_like_python() {
+    fn formats_speakers() {
         let r = ConvertResponse {
             language_code: Some("en".into()),
             text: "ignored".into(),

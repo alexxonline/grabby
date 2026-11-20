@@ -1,9 +1,7 @@
-//! Ephemeral source-labelled captions; never persisted as the final transcript
-//! (port of `app/realtime.py`).
+//! Ephemeral source-labelled captions; never persisted as the final transcript.
 //!
-//! Speaks the same WebSocket protocol as the ElevenLabs Python SDK's
-//! `speech_to_text.realtime.connect({"model_id": "scribe_v3_live", "audio_format":
-//! PCM_16000, "sample_rate": 16000, "commit_strategy": VAD})`.
+//! Speaks the ElevenLabs realtime speech-to-text WebSocket protocol with
+//! `model_id=scribe_v3_live`, `audio_format=pcm_16000` and `commit_strategy=vad`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,7 +24,7 @@ use crate::transcription;
 pub const SOURCES: [&str; 2] = ["you", "others"];
 const UNAVAILABLE: &str = "Live transcription unavailable. Check ElevenLabs connection, quota and API key.";
 
-/// Message types the SDK re-emits as `RealtimeEvents.ERROR`.
+/// Server message types that are treated as errors.
 const ERROR_EVENTS: [&str; 15] = [
     "error",
     "auth_error",
@@ -219,7 +217,7 @@ async fn stream_inner(inner: &Arc<Mutex<Inner>>, stop: &Arc<AtomicBool>, source:
         .map_err(|e| e.to_string())?;
     let (mut sink, mut incoming) = ws.split();
 
-    // Message handler: like the SDK's, it emits ERROR on a failure and CLOSE when the socket ends.
+    // Message handler: reports an error on failure and a close when the socket ends.
     let reader_inner = inner.clone();
     let reader_stop = stop.clone();
     let reader_source = source.to_owned();

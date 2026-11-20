@@ -1,10 +1,9 @@
 # Grabby (Rust)
 
-A native Windows port of Grabby: the FastAPI backend (`grabby-backend/`) and the Preact frontend
-(`grabby-front/`) rewritten as one Rust desktop app. The UI uses
-[Rune](https://github.com/anomalyco/rune) with its `rune-kit` components.
+A native Windows meeting recorder and transcription app, written as one Rust desktop app. The UI
+uses [Rune](https://github.com/anomalyco/rune) with its `rune-kit` components.
 
-It does the same things as the Python/web version:
+Features:
 
 - records your microphone and system audio (WASAPI loopback) to a crash-safe raw PCM capture,
   then mixes it and exports MP3 with `ffmpeg` (WAV if `ffmpeg` is missing)
@@ -13,16 +12,16 @@ It does the same things as the Python/web version:
 - edits transcripts (speaker renaming), notes per recording, full-text search (SQLite FTS5)
 - auto-delete audio and auto title (OpenRouter) settings
 - Auto / Light / Dark appearance (Settings); Auto follows the Windows app mode
-- text sync with the same wire contract (`../SYNC.md`), including the local mock server
+- text sync across devices (wire contract in [`../SYNC.md`](../SYNC.md)), including the local mock server
 
 ## ElevenLabs behaviour
 
-Requests match what the Python backend sent through the official SDK (`elevenlabs==2.68.0`):
+Requests match what the official ElevenLabs SDK sends:
 
 - **Batch:** `POST https://api.elevenlabs.io/v1/speech-to-text`, multipart, header `xi-api-key`,
   fields `model_id=scribe_v3`, `tag_audio_events=false`, `diarize=true`, plus `file`. 240 s
   timeout and two retries on 408/409/429/5xx, as the SDK does. Word-level results are grouped into
-  `Speaker N: ...` lines exactly as before.
+  `Speaker N: ...` lines.
 - **Realtime:** WebSocket `wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v3_live&audio_format=pcm_16000&commit_strategy=vad&include_timestamps=false`,
   one connection per source ("You" = mic, "Others" = system audio), 16 kHz mono PCM sent as
   `input_audio_chunk` messages in chunks of at least 200 ms.
@@ -44,7 +43,7 @@ Debug builds keep the console for logs:
 cargo run
 ```
 
-Tests (backend logic, sync round trip with conflicts, PCM mixing, parsing helpers):
+Tests (service logic, sync round trip with conflicts, PCM mixing, parsing helpers):
 
 ```powershell
 cargo test
@@ -58,15 +57,14 @@ carry its vendored patches (`wgpu-hal`, `winit`, `parley_engine`, `accesskit_*`)
 
 Data lives in `%LOCALAPPDATA%\Grabby` by default:
 
-- `grabby.db` — SQLite database (same schema as the Python backend)
+- `grabby.db` — SQLite database
 - `recordings\` — `.mp3` / `.wav` files and in-progress `.capture-*` folders
 - `configs.dat` — API keys, encrypted with Windows DPAPI
 
-Set `GRABBY_DATA_DIR` to use another folder. To keep your existing data, point it at the old
-backend folder (the schema is identical):
+Set `GRABBY_DATA_DIR` to use another folder:
 
 ```powershell
-$env:GRABBY_DATA_DIR = "C:\path\to\grabby\grabby-backend"
+$env:GRABBY_DATA_DIR = "D:\grabby-data"
 ```
 
 ### API keys
@@ -90,21 +88,22 @@ Keys are never read from `.env`. When the app starts, any of these keys found in
 comment. A process environment variable with the same name still works as a fallback (useful for
 CI); a key saved in Settings takes priority.
 
-`.env` (see `.env.example`) now holds only non-secret settings. `ffmpeg` must be on `PATH` for MP3
+`.env` (see `.env.example`) holds only non-secret settings. `ffmpeg` must be on `PATH` for MP3
 export.
 
 ## Layout
 
-| Rust module | Replaces |
+| Module | Responsibility |
 | --- | --- |
-| `src/core.rs` | `app/main.py` endpoints (same status codes and messages) |
-| `src/db.rs` | `app/database.py` |
-| `src/sync.rs` | `app/sync.py` |
-| `src/recorder.rs`, `src/audio.rs` | `app/recorder.py`, `audioop`/`pydub` |
-| `src/realtime.rs` | `app/realtime.py` |
-| `src/transcription.rs` | `app/transcription.py` |
-| `src/titles.rs` | `app/titles.py` |
-| `src/ui/*` | `grabby-front/src/pages/*` and `components/*` |
+| `src/core.rs` | Service layer called directly by the UI |
+| `src/db.rs` | SQLite schema and queries |
+| `src/sync.rs` | Text sync, conflicts, local mock receiver |
+| `src/recorder.rs`, `src/audio.rs` | Capture, resampling, mixing, MP3/WAV export |
+| `src/realtime.rs` | ElevenLabs realtime captions |
+| `src/transcription.rs` | Batch transcription |
+| `src/titles.rs` | OpenRouter auto titles |
+| `src/secrets.rs`, `src/config.rs` | DPAPI key storage, data directory |
+| `src/ui/*` | Rune pages and components |
 
 Headless snapshots of each page (debug builds), useful for checking the UI:
 
@@ -112,16 +111,13 @@ Headless snapshots of each page (debug builds), useful for checking the UI:
 cargo run -- --snap recorder.png --scene recorder   # also: recordings, search, settings
 ```
 
-## Differences from the Python/web version
+## Design notes
 
-- No HTTP server: the UI calls the service layer directly. So `/api/sync/mock/exchange` (the
-  loopback mock receiver endpoint) has no HTTP equivalent; the mock transport, which the app uses,
-  calls the same receiver in-process as before.
-- Delete asks for confirmation inline instead of a browser `confirm()` dialog; Download opens a
-  native Save dialog.
-- Notes autosave (600 ms) and save when you switch tab, page or close the window. The browser's
-  `localStorage` draft backup is gone, since there is no network between UI and database.
+- No HTTP server: the UI calls the service layer directly. The sync mock transport calls the
+  receiver in-process.
+- Delete asks for confirmation inline; Download opens a native Save dialog.
+- Notes autosave (600 ms) and save when you switch tab, page or close the window.
 - Audio capture uses `cpal`. WASAPI glitches (xruns) and default-device switches are logged
   instead of stopping the recording, and silence is written to the system track while nothing
   plays, so microphone and system audio stay aligned.
-- The resampler is linear interpolation rather than `audioop.ratecv`'s exact algorithm.
+- The resampler uses linear interpolation.

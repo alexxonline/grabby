@@ -1,19 +1,17 @@
-//! Data locations and environment configuration (`.env`), mirroring the Python backend's
-//! `load_dotenv` + `os.environ` behaviour without mutating the process environment.
+//! Data locations and environment configuration (`.env`), read without mutating the process
+//! environment.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
-/// Values loaded from `.env` (lowest precedence: real environment variables win, as with
-/// python-dotenv's default `override=False`).
+/// Values loaded from `.env` (lowest precedence: real environment variables win).
 static DOTENV: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
 
 /// Where the database, recordings and `.env` live.
 ///
 /// `GRABBY_DATA_DIR` wins; otherwise `%LOCALAPPDATA%\Grabby` (or `~/.local/share/grabby`).
-/// Point `GRABBY_DATA_DIR` at the old `grabby-backend` folder to reuse its database and audio.
 pub fn data_dir() -> &'static Path {
     DATA_DIR.get_or_init(|| {
         // Tests never read or write the user's real data.

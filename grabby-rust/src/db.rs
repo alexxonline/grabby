@@ -1,6 +1,6 @@
-//! SQLite database with FTS5 for storing transcriptions (port of `app/database.py`).
+//! SQLite database with FTS5 for storing transcriptions.
 //!
-//! Like the Python backend, every thread gets its own connection.
+//! Every thread gets its own connection.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

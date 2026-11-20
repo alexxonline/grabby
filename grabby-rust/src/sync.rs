@@ -13,7 +13,7 @@ use crate::{config, db, timefmt};
 
 static LOCK: Mutex<()> = Mutex::new(());
 
-/// A sync failure, named after the Python exception type it replaces: the status message
+/// A sync failure, identified by an error kind name: the status message
 /// shows only that name, never provider responses, URLs or credentials.
 #[derive(Debug, Clone)]
 pub struct SyncError {
@@ -264,7 +264,7 @@ fn snapshot(conn: &Connection, row: &Row) -> SResult<Value> {
     }))
 }
 
-// ----- Python-like access to JSON payloads -----
+// ----- Helpers for access to JSON payloads -----
 
 fn get<'a>(v: &'a Value, key: &str) -> SResult<&'a Value> {
     match v {
@@ -366,7 +366,7 @@ pub fn receive(body: &Value) -> SResult<Value> {
 
 fn receive_with(conn: &Connection, cursor: i64, device_id: &str, incoming: &[Value]) -> SResult<Value> {
     let tx = conn.unchecked_transaction()?;
-    // Insertion-ordered like the Python dict.
+    // Insertion-ordered.
     let mut records: Vec<(String, Value)> = {
         let mut stmt = tx.prepare("SELECT recording_id, snapshot FROM sync_mock_records")?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
@@ -748,7 +748,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn endpoint_validation_matches_python_rules() {
+    fn endpoint_validation_rules() {
         assert!(valid_endpoint("https://server.example/sync"));
         assert!(!valid_endpoint("http://server.example/sync"));
         assert!(!valid_endpoint("https://user:pw@server.example/sync"));

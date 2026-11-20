@@ -83,10 +83,10 @@ struct Manifest {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecorderError {
-    /// HTTP 400 in the Python API.
+    /// Invalid request (maps to status 400).
     #[error("{0}")]
     Invalid(String),
-    /// HTTP 409 in the Python API.
+    /// Conflicting state, e.g. already recording (maps to status 409).
     #[error("{0}")]
     Conflict(String),
 }
@@ -678,7 +678,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validates_names_like_python() {
+    fn validates_names() {
         assert_eq!(validate_stem("Weekly sync.mp3").unwrap(), "Weekly sync");
         assert!(validate_stem("CON").is_err());
         assert!(validate_stem("con.txt").is_err());

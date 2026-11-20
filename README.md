@@ -2,161 +2,59 @@
 
 ![Screenshot of grabby](grabby-screenshot.png)
 
-| Recordings | Transcript |
-| --- | --- |
-| ![Recordings](docs/screenshots/recordings.png) | ![Transcript](docs/screenshots/transcript.png) |
-| **Search** | **Recorder** |
-| ![Search](docs/screenshots/search.png) | ![Recorder](docs/screenshots/recorder.png) |
-
-
-Grabby is a local meeting recorder + transcription app.
+Grabby is a local meeting recorder and transcription app, written in Rust as a native Windows
+desktop app. The UI uses [Rune](https://github.com/anomalyco/rune).
 
 It records:
+
 - your microphone audio
 - system/meeting audio via WASAPI loopback
 
 Then it lets you:
+
+- see live captions while recording (ElevenLabs realtime STT)
 - manage recordings (play, rename, delete)
-- transcribe recordings with ElevenLabs Scribe v3
+- transcribe recordings with ElevenLabs Scribe v3, with speaker diarization
 - edit transcripts (including speaker renaming) and keep notes per recording
 - search across all transcripts with SQLite FTS5
 - optionally auto-delete audio and auto-title recordings (see [Recording settings](#recording-settings))
 - optionally sync titles, transcripts and notes across devices (see [Text sync](#text-sync))
 
-## Tech Stack
+## Project structure
 
-- **Backend:** FastAPI (Python)
-- **Frontend:** Preact + Vite (TypeScript)
-- **Database:** SQLite (`grabby-backend/grabby.db`) with FTS5
-
-## Project Structure
-
-- `grabby-backend/` — FastAPI API + recorder + transcription logic
-- `grabby-front/` — Preact web app
-- `grabby-backend/recordings/` — saved `.mp3` / `.wav` files
-- `docs/screenshots/` — README screenshots (generated from the Playwright mock API)
-- `SYNC.md` — text sync plan and API contract
+- `grabby-rust/` — the app (source, `Cargo.toml`, toolchain pin)
+- `SYNC.md` — text sync design and receiver API contract
 - `research/` — notes and research docs
 
 ## Prerequisites
 
-- Windows (WASAPI loopback recording)
-- Python 3.13+
-- Node.js 20.19+ or 22.12+ (required by Vite 8)
-- npm
-- `ffmpeg` on your `PATH` (recommended for MP3 export)
-- ElevenLabs API key (`ELEVENLABS_API_KEY`)
+- Windows
+- Rust via [rustup](https://rustup.rs); the exact toolchain is pinned in `grabby-rust/rust-toolchain.toml` and installed automatically
+- Visual Studio C++ build tools (MSVC toolchain)
+- `ffmpeg` on your `PATH` for MP3 export (WAV is used if it is missing)
+- ElevenLabs API key
 
-## 1) Backend Setup (FastAPI)
-
-Open a terminal in `grabby-backend/`.
-
-### Install dependencies
-
-If you already use `grabby-backend/.venv`, activate it and install:
+## Build and run
 
 ```powershell
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+cd grabby-rust
+cargo run                  # debug build, keeps a console for logs
+cargo build --release      # target\release\grabby.exe, no console window
+cargo test
 ```
 
-If `.venv` does not exist yet:
+More detail (configuration, key storage, module layout) is in [grabby-rust/README.md](grabby-rust/README.md).
 
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+## API keys
 
-### Configure environment
+Enter keys in **Settings > API keys**. They are encrypted with Windows DPAPI for the current user
+and stored in `configs.dat` in the data folder (`%LOCALAPPDATA%\Grabby`, or `GRABBY_DATA_DIR`).
 
-Create `grabby-backend/.env` with:
-
-```env
-ELEVENLABS_API_KEY=your_key_here
-# Optional, for automatic titles
-OPENROUTER_API_KEY=your_openrouter_key_here
-# Optional, for text sync (never returned by the API)
-GRABBY_SYNC_API_KEY=your_sync_key_here
-```
-
-### Run backend
-
-```powershell
-.venv\Scripts\uvicorn app.main:app --reload --port 8000
-```
-
-Backend URL: `http://localhost:8000`
-
-## 2) Frontend Setup (Preact)
-
-Open a second terminal in `grabby-front/`:
-
-```powershell
-npm install
-npm run dev
-```
-
-Frontend URL (Vite): usually `http://localhost:5173`
-
-The frontend calls the backend at `http://localhost:8000/api`.
-
-## Main API Endpoints
-
-- `GET /api/status` — recorder status
-- `POST /api/start` — start recording
-- `POST /api/stop` — stop recording
-- `GET /api/recordings` — list recordings
-- `PATCH /api/recordings/{filename}` — rename recording
-- `DELETE /api/recordings/{filename}` — delete recording
-- `POST /api/recordings/{filename}/transcribe` — start transcription
-- `GET /api/recordings/{filename}/transcription` — get transcription status/content
-- `PUT /api/recordings/{filename}/transcription` — update transcript text
-- `GET /api/transcriptions/search?q=...` — full-text transcript search
-- `GET /api/settings`, `PUT /api/settings` — recording preferences
-- `/api/sync/*` — text sync settings, status, manual sync, conflicts and mock scenarios (see `SYNC.md`)
-
-## End-to-end tests
-
-Playwright tests run against the Vite dev server with a mocked API, so no backend, audio device or API keys are needed. They use the installed Chrome browser.
-
-```powershell
-cd grabby-front
-npm run test:e2e
-npm run test:e2e:report   # open the HTML report
-```
-
-Backend tests: `cd grabby-backend; .venv\Scripts\python -m pytest`.
-
-## Build Frontend for FastAPI Static Hosting (Optional)
-
-If you want FastAPI to serve the built frontend:
-
-1. Build frontend in `grabby-front/`:
-
-```powershell
-npm run build
-```
-
-2. Start backend as usual:
-
-```powershell
-cd ../grabby-backend
-.venv\Scripts\uvicorn app.main:app --reload --port 8000
-```
-
-When `grabby-front/dist` exists, FastAPI serves the SPA and assets.
-
-## Troubleshooting
-
-- If MP3 export fails, install `ffmpeg` and ensure it is on `PATH`.
-- On Python 3.13+, keep `audioop-lts` installed (already in `requirements.txt`).
-- If transcription fails, verify `ELEVENLABS_API_KEY` in `grabby-backend/.env`.
-- If PowerShell blocks activation scripts, run:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
+| Key | Used for |
+| --- | --- |
+| ElevenLabs | Required: live captions and transcription |
+| OpenRouter | Optional: Auto title |
+| Text sync | Optional: Bearer token for your sync endpoint |
 
 ## Recording settings
 
@@ -165,19 +63,21 @@ Open **Settings** to enable either option (both are off by default and persist i
 - **Auto-delete audio:** removes the audio only after a successful transcription has been saved. Transcript-only entries stay in Recordings and Search and can be renamed or deleted. Failed transcription keeps the audio for retry. Existing recordings are not purged when you switch this on.
 - **Auto title:** sends up to 24,000 characters of transcript text to OpenRouter using `openai/gpt-5.6-luna` and applies an editable display title. Recording identifiers and transcript links stay stable. Missing keys or provider failures keep the original title and show an error on the recording.
 
-Set `OPENROUTER_API_KEY` in `grabby-backend/.env` and restart the backend. The key is never sent to the frontend. Settings apply when a transcription job begins. Rename now changes the display title rather than the underlying audio filename.
-
-Settings API: `GET /api/settings`, `PUT /api/settings` with `auto_delete_audio` and `auto_title` booleans.
+Settings apply when a transcription job begins. Rename changes the display title rather than the underlying audio filename.
 
 ## Text sync
 
-Open **Settings → Text sync** to share titles, transcripts and notes between devices. Audio files never leave the device.
+Open **Settings > Text sync** to share titles, transcripts and notes between devices. Audio files never leave the device.
 
-- Enable sync, enter an HTTPS receiving endpoint and API key, then save. The key is stored in `grabby-backend/.env` as `GRABBY_SYNC_API_KEY` and is never returned to the browser.
+- Enable sync, enter an HTTPS receiving endpoint and API key, then save. The key is stored encrypted (DPAPI) and is never shown again.
 - While enabled, the app exchanges changes every 30 seconds; **Sync now** runs it on demand.
 - If the same recording was edited on two devices, both versions are kept and you choose which one to keep.
 - A local **mock server** mode lets you try sync and simulate another device, conflicts, server failures and rejected keys without a remote endpoint.
 
-![Text sync settings](docs/screenshots/settings.png)
-
 The receiver contract and design notes are in [SYNC.md](SYNC.md).
+
+## Troubleshooting
+
+- If MP3 export fails, install `ffmpeg` and ensure it is on `PATH`.
+- If transcription fails, check the ElevenLabs key in **Settings > API keys**.
+- If the build fails on an older compiler, let rustup install the pinned toolchain (run `cargo` from inside `grabby-rust/`).

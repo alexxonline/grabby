@@ -1,7 +1,7 @@
-//! The application service layer: a port of the FastAPI endpoints in `app/main.py`.
+//! The application service layer called directly by the UI.
 //!
-//! Each function returns what the endpoint returned, or an [`ApiError`] carrying the HTTP
-//! status and `detail` the Python API used, so the UI shows the same messages.
+//! Each function returns its result, or an [`ApiError`] carrying a status code and a
+//! `detail` message that the UI shows to the user.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
