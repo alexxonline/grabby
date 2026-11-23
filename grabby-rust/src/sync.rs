@@ -1,6 +1,3 @@
-//! Text-only synchronization and persistent reference receiver (port of `app/sync.py`).
-//! The wire contract is documented in `SYNC.md`.
-
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -13,8 +10,6 @@ use crate::{config, db, timefmt};
 
 static LOCK: Mutex<()> = Mutex::new(());
 
-/// A sync failure, identified by an error kind name: the status message
-/// shows only that name, never provider responses, URLs or credentials.
 #[derive(Debug, Clone)]
 pub struct SyncError {
     pub kind: &'static str,
@@ -183,7 +178,6 @@ pub fn save_settings(enabled: bool, endpoint: &str, mock: bool, api_key_input: O
     {
         let _guard = sync_lock();
         if api_key_input.is_some() {
-            // Encrypted with DPAPI into configs.dat; never written in plain text.
             crate::secrets::set(crate::secrets::SYNC, &key).map_err(|e| SyncError { kind: "OSError", message: e })?;
         }
         db::with_conn(|conn| {
@@ -264,7 +258,6 @@ fn snapshot(conn: &Connection, row: &Row) -> SResult<Value> {
     }))
 }
 
-// ----- Helpers for access to JSON payloads -----
 
 fn get<'a>(v: &'a Value, key: &str) -> SResult<&'a Value> {
     match v {
@@ -347,7 +340,6 @@ fn validate_record(r: &Value, incoming: bool) -> SResult<()> {
     Ok(())
 }
 
-/// Mock receiver transaction: account is the single configured local test account.
 pub fn receive(body: &Value) -> SResult<Value> {
     let schema = get(body, "schema_version")?;
     let cursor = get_int(body, "cursor")?;
@@ -366,7 +358,6 @@ pub fn receive(body: &Value) -> SResult<Value> {
 
 fn receive_with(conn: &Connection, cursor: i64, device_id: &str, incoming: &[Value]) -> SResult<Value> {
     let tx = conn.unchecked_transaction()?;
-    // Insertion-ordered.
     let mut records: Vec<(String, Value)> = {
         let mut stmt = tx.prepare("SELECT recording_id, snapshot FROM sync_mock_records")?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
@@ -501,7 +492,6 @@ fn apply_remote(conn: &Connection, r: &Value) -> SResult<()> {
             }
             let n = get(r, "notes")?;
             if n.is_object() && !n.as_object().is_some_and(Map::is_empty) {
-                // Notes IDs can collide across independently imported recordings; retain both texts.
                 let mut nid = get_str(n, "id")?.to_owned();
                 if conn.query_row("SELECT 1 FROM recording_notes WHERE id=?", [&nid], |_| Ok(())).optional()?.is_some() {
                     nid = uuid::Uuid::new_v4().to_string();
@@ -537,7 +527,6 @@ pub fn run() -> SResult<RunResult> {
     };
     let result = run_locked();
     if let Err(e) = &result {
-        // Never expose provider responses, URLs or credentials in logs/status.
         let message = format!("Sync failed ({}). Check connection and credentials.", e.kind);
         let _ = db::with_conn(|conn| Ok(put(conn, "error", message)));
     }

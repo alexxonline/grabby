@@ -1,11 +1,6 @@
-//! Speaker labels in transcripts (port of `components/speakers.ts`) and search snippet
-//! parsing (`components/searchSnippet.ts`).
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpeakerEntry {
-    /// e.g. "Speaker 1"
     pub original: String,
-    /// The edited name.
     pub current: String,
 }
 
@@ -13,7 +8,6 @@ fn is_line_break(c: char) -> bool {
     matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
 }
 
-/// Byte offsets where a line starts (JavaScript's multiline `^`).
 fn line_starts(text: &str) -> Vec<usize> {
     let mut starts = vec![0];
     for (i, c) in text.char_indices() {
@@ -24,14 +18,12 @@ fn line_starts(text: &str) -> Vec<usize> {
     starts
 }
 
-/// The label before the first colon of a line, when the line has one: `^([^:\r\n]+):`.
 fn label_at(text: &str, start: usize) -> Option<&str> {
     let rest = &text[start..];
     let end = rest.find(|c: char| c == ':' || c == '\r' || c == '\n')?;
     (end > 0 && rest[end..].starts_with(':')).then(|| &rest[..end])
 }
 
-/// Extract the unique speaker labels from transcript text, sorted.
 pub fn extract_speakers(text: &str) -> Vec<SpeakerEntry> {
     let mut seen: Vec<String> = Vec::new();
     for start in line_starts(text) {
@@ -45,7 +37,6 @@ pub fn extract_speakers(text: &str) -> Vec<SpeakerEntry> {
     seen.into_iter().map(|s| SpeakerEntry { original: s.clone(), current: s }).collect()
 }
 
-/// Replace "OldName:" at the start of every line with "NewName:".
 pub fn replace_speaker(text: &str, old_name: &str, new_name: &str) -> String {
     let prefix = format!("{old_name}:");
     let mut out = String::with_capacity(text.len());
@@ -65,13 +56,11 @@ pub fn replace_speaker(text: &str, old_name: &str, new_name: &str) -> String {
     out
 }
 
-/// Splits a line into its speaker label and the rest (`^(.+?):(.*)`).
 pub fn split_label(line: &str) -> Option<(&str, &str)> {
     let i = line.find(':')?;
     (i > 0).then(|| (&line[..i], &line[i + 1..]))
 }
 
-/// Turns an FTS snippet with `**match**` markers into plain text and highlighted byte ranges.
 pub fn parse_snippet(snippet: &str) -> (String, Vec<(usize, usize)>) {
     let mut text = String::new();
     let mut marks = Vec::new();

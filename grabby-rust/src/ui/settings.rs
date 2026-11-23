@@ -1,5 +1,3 @@
-//! Settings (`pages/SettingsPage.tsx`) and text sync (`components/SyncSettingsPanel.tsx`).
-
 use std::time::{Duration, Instant};
 
 use rune::tok::{motion, space, type_};
@@ -62,7 +60,6 @@ pub fn enter(s: &mut Ui) {
     s.sync.last_poll = Some(Instant::now());
 }
 
-/// Refreshes sync status every 5 seconds.
 pub fn tick(s: &mut Ui) -> bool {
     if s.sync.busy || s.sync.last_poll.is_some_and(|t| t.elapsed() < Duration::from_secs(5)) {
         return false;
@@ -93,7 +90,6 @@ fn toggle(s: &mut Ui, auto_delete: bool) {
     s.settings.saving = false;
 }
 
-/// Runs a sync operation off the UI thread, then refreshes status and conflicts.
 fn act(s: &mut Ui, operation: impl FnOnce() -> ApiResult<Option<String>> + Send + 'static, success: &'static str) {
     s.sync.busy = true;
     s.sync.error.clear();
@@ -188,7 +184,6 @@ fn switch_row(p: &P, key: &str, label: &str, description: &str, checked: bool, d
         .child(switch_control(p, label, checked, disabled, f))
 }
 
-/// A switch drawn from Rune's theme tokens, whose off track stays visible on light cards.
 fn switch_control(p: &P, label: &str, on: bool, disabled: bool, f: impl Fn(&mut Ui) + 'static) -> El {
     let (w, h, knob) = (40.0, 22.0, 18.0);
     let inset = (h - knob) / 2.0;

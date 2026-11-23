@@ -1,8 +1,3 @@
-//! Ephemeral source-labelled captions; never persisted as the final transcript.
-//!
-//! Speaks the ElevenLabs realtime speech-to-text WebSocket protocol with
-//! `model_id=scribe_v3_live`, `audio_format=pcm_16000` and `commit_strategy=vad`.
-
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
@@ -24,7 +19,8 @@ use crate::transcription;
 pub const SOURCES: [&str; 2] = ["you", "others"];
 const UNAVAILABLE: &str = "Live transcription unavailable. Check ElevenLabs connection, quota and API key.";
 
-/// Server message types that are treated as errors.
+const MIN_CHUNK_BYTES: usize = 16_000 * 2 / 5;
+
 const ERROR_EVENTS: [&str; 15] = [
     "error",
     "auth_error",
@@ -217,7 +213,6 @@ async fn stream_inner(inner: &Arc<Mutex<Inner>>, stop: &Arc<AtomicBool>, source:
         .map_err(|e| e.to_string())?;
     let (mut sink, mut incoming) = ws.split();
 
-    // Message handler: reports an error on failure and a close when the socket ends.
     let reader_inner = inner.clone();
     let reader_stop = stop.clone();
     let reader_source = source.to_owned();
@@ -265,8 +260,7 @@ async fn stream_inner(inner: &Arc<Mutex<Inner>>, stop: &Arc<AtomicBool>, source:
             }
             let converted = resampler.as_mut().map(|(_, r)| r.process(&mono)).unwrap_or_default();
             buffer.extend_from_slice(&i16_to_bytes(&converted));
-            if buffer.len() >= 6400 {
-                // At least 200 ms of mono PCM16.
+            if buffer.len() >= MIN_CHUNK_BYTES {
                 let message = json!({
                     "message_type": "input_audio_chunk",
                     "audio_base_64": base64::engine::general_purpose::STANDARD.encode(&buffer),
@@ -281,7 +275,6 @@ async fn stream_inner(inner: &Arc<Mutex<Inner>>, stop: &Arc<AtomicBool>, source:
                 buffer.clear();
             }
         }
-        // Preview is discarded on stop; the full saved audio is transcribed separately.
         Ok(())
     }
     .await;

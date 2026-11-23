@@ -1,5 +1,3 @@
-//! 16-bit PCM helpers: mono mixdown, channel conversion, resampling and mixing.
-
 pub fn bytes_to_i16(data: &[u8]) -> Vec<i16> {
     data.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect()
 }
@@ -8,8 +6,6 @@ pub fn i16_to_bytes(samples: &[i16]) -> Vec<u8> {
     samples.iter().flat_map(|s| s.to_le_bytes()).collect()
 }
 
-/// Mixes interleaved frames to mono: the 0.5/0.5 average for stereo, the integer average
-/// of every channel otherwise.
 pub fn to_mono(samples: &[i16], channels: usize) -> Vec<i16> {
     match channels {
         0 | 1 => samples.to_vec(),
@@ -21,8 +17,6 @@ pub fn to_mono(samples: &[i16], channels: usize) -> Vec<i16> {
     }
 }
 
-/// Converts between channel counts: mono is duplicated, multichannel is averaged, and other
-/// layouts are bridged through mono.
 pub fn convert_channels(samples: &[i16], from: usize, to: usize) -> Vec<i16> {
     if from == to {
         return samples.to_vec();
@@ -34,12 +28,9 @@ pub fn convert_channels(samples: &[i16], from: usize, to: usize) -> Vec<i16> {
     mono.iter().flat_map(|&s| std::iter::repeat_n(s, to)).collect()
 }
 
-/// A streaming linear-interpolation resampler for interleaved PCM16 whose state carries
-/// across calls.
 pub struct Resampler {
     channels: usize,
     step: f64,
-    /// Position of the next output frame, in input frames; -1 is the previous call's last frame.
     t: f64,
     prev: Option<Vec<i16>>,
 }
@@ -84,7 +75,6 @@ impl Resampler {
     }
 }
 
-/// Sample-wise saturating addition; the shorter side is zero-padded.
 pub fn add(a: &[i16], b: &[i16]) -> Vec<i16> {
     let len = a.len().max(b.len());
     (0..len)

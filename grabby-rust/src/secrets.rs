@@ -1,16 +1,3 @@
-//! API keys encrypted at rest with Windows DPAPI, in `<data dir>\configs.dat`.
-//!
-//! Each value is protected with `CryptProtectData` for the current Windows user, with entropy
-//! that binds the blob to its key name, so only this user on this machine can read it and a
-//! blob copied under another name doesn't decrypt. The file holds only base64 DPAPI blobs:
-//!
-//! ```json
-//! {"version": 1, "secrets": {"ELEVENLABS_API_KEY": "<base64 DPAPI blob>"}}
-//! ```
-//!
-//! Plain-text values are never written to disk or shown in the UI; decrypted copies live only
-//! as long as a request needs them.
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -23,10 +10,8 @@ use crate::config;
 pub const ELEVENLABS: &str = "ELEVENLABS_API_KEY";
 pub const OPENROUTER: &str = "OPENROUTER_API_KEY";
 pub const SYNC: &str = "GRABBY_SYNC_API_KEY";
-/// Every secret the app uses.
 pub const NAMES: [&str; 3] = [ELEVENLABS, OPENROUTER, SYNC];
 
-/// Serializes read-modify-write of the file.
 static FILE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Default, Serialize, Deserialize)]
@@ -39,7 +24,6 @@ pub fn store_path() -> PathBuf {
     config::data_dir().join("configs.dat")
 }
 
-/// Overwrites a buffer holding plain text before it is freed.
 pub fn wipe(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
         // SAFETY: `b` is a valid, aligned, exclusive reference.
@@ -63,7 +47,6 @@ mod dpapi {
         CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr().cast_mut() }
     }
 
-    /// Copies a DPAPI output blob, optionally wiping it, and frees it.
     fn take(out: CRYPT_INTEGER_BLOB, wipe_after: bool) -> Vec<u8> {
         if out.pbData.is_null() {
             return Vec::new();
@@ -162,7 +145,6 @@ fn remove_in(path: &Path, name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The decrypted secret, if one is stored.
 pub fn get(name: &str) -> Option<String> {
     match get_in(&store_path(), name) {
         Ok(v) => v.filter(|v| !v.is_empty()),
@@ -177,7 +159,6 @@ pub fn is_set(name: &str) -> bool {
     read_store(&store_path()).is_ok_and(|s| s.secrets.contains_key(name))
 }
 
-/// Validates, encrypts and stores a secret; an empty value removes it.
 pub fn set(name: &str, value: &str) -> Result<(), String> {
     if !NAMES.contains(&name) {
         return Err(format!("Unknown secret {name}."));
@@ -196,8 +177,6 @@ pub fn remove(name: &str) -> Result<(), String> {
     remove_in(&store_path(), name)
 }
 
-/// Moves secrets out of plain-text `.env` files into `configs.dat`, then deletes those lines
-/// from the data folder's `.env`.
 pub fn migrate_from_env_file() {
     let env_path = config::env_path();
     let Ok(iter) = dotenvy::from_path_iter(&env_path) else { return };
@@ -231,7 +210,6 @@ mod tests {
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(!raw.contains("sk_test_123"), "plain text must not reach disk");
         assert_eq!(get_in(&path, ELEVENLABS).unwrap().as_deref(), Some("sk_test_123"));
-        // A blob moved under another name doesn't decrypt (entropy binds it to its name).
         let mut store = read_store(&path).unwrap();
         let blob = store.secrets[ELEVENLABS].clone();
         store.secrets.insert(OPENROUTER.into(), blob);

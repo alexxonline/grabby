@@ -1,8 +1,3 @@
-//! The application service layer called directly by the UI.
-//!
-//! Each function returns its result, or an [`ApiError`] carrying a status code and a
-//! `detail` message that the UI shows to the user.
-
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -41,7 +36,6 @@ impl From<rusqlite::Error> for ApiError {
 
 pub type ApiResult<T> = Result<T, ApiError>;
 
-// ----- Database readiness -----
 
 struct DbState {
     ready: bool,
@@ -68,7 +62,6 @@ pub fn ensure_database() -> bool {
             state.retry_at = Some(Instant::now() + Duration::from_secs(5));
         }
     }
-    // Do not retain a failed/stale startup connection between attempts.
     db::close_connection();
     state.ready
 }
@@ -81,15 +74,15 @@ fn require_database() -> ApiResult<()> {
     }
 }
 
-/// Starts the 30-second automatic sync worker.
 pub fn start_background_sync() {
     std::thread::Builder::new()
         .name("auto-sync".into())
         .spawn(|| {
             loop {
                 if ensure_database() && sync::settings().is_ok_and(|s| s.enabled) {
-                    // Sanitized status is persisted by the sync client.
-                    let _ = run_sync();
+                    if let Err(e) = run_sync() {
+                        eprintln!("Automatic sync failed: {}", e.detail);
+                    }
                 }
                 std::thread::sleep(Duration::from_secs(30));
             }
@@ -97,15 +90,11 @@ pub fn start_background_sync() {
         .ok();
 }
 
-// ----- In-flight transcription jobs -----
 
-/// filename -> "pending" | "completed" | "error"
-static TRANSCRIBING: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
-/// filename -> error message
+static TRANSCRIBING: LazyLock<Mutex<HashMap<String, JobStatus>>> = LazyLock::new(Default::default);
 static TRANSCRIBE_ERRORS: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(Default::default);
 
-/// filename -> human-readable processing stage ("Transcribing", ...)
 static STAGES: LazyLock<Mutex<HashMap<String, &'static str>>> = LazyLock::new(Default::default);
 
 fn set_stage(filename: &str, stage: Option<&'static str>) {
@@ -124,7 +113,7 @@ fn job_stage(filename: &str) -> Option<String> {
         .map(|s| (*s).to_owned())
 }
 
-fn job_state(filename: &str) -> Option<String> {
+fn job_state(filename: &str) -> Option<JobStatus> {
     TRANSCRIBING
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -132,11 +121,11 @@ fn job_state(filename: &str) -> Option<String> {
         .cloned()
 }
 
-fn set_job(filename: &str, state: &str) {
+fn set_job(filename: &str, state: JobStatus) {
     TRANSCRIBING
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(filename.to_owned(), state.to_owned());
+        .insert(filename.to_owned(), state);
 }
 
 fn job_error(filename: &str) -> Option<String> {
@@ -160,10 +149,9 @@ fn any_pending() -> bool {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .values()
-        .any(|v| v == "pending")
+        .any(|v| *v == JobStatus::Pending)
 }
 
-// ----- Schemas -----
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Settings {
@@ -181,17 +169,37 @@ pub struct RecordingInfo {
     pub audio_available: bool,
     pub processing_error: Option<String>,
     pub processing: bool,
-    /// What the background job is doing right now, while `processing`.
     pub stage: Option<String>,
     pub created_at: String,
+}
+
+/// Where a recording's transcription job stands. Pending and error are also persisted by `as_str`.
+#[derive(Clone, Copy, Debug, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum JobStatus {
+    #[default]
+    None,
+    Pending,
+    Completed,
+    Error,
+}
+
+impl JobStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JobStatus::None => "none",
+            JobStatus::Pending => "pending",
+            JobStatus::Completed => "completed",
+            JobStatus::Error => "error",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 pub struct TranscriptionStatus {
     pub filename: String,
     pub title: Option<String>,
-    /// "none" | "pending" | "completed" | "error"
-    pub status: String,
+    pub status: JobStatus,
     pub text: Option<String>,
     pub language: Option<String>,
     pub error: Option<String>,
@@ -213,7 +221,6 @@ pub struct StorageInfo {
     pub disk_free_bytes: u64,
 }
 
-// ----- Settings -----
 
 pub fn get_settings() -> ApiResult<Settings> {
     require_database()?;
@@ -237,7 +244,6 @@ pub fn update_settings(auto_delete_audio: bool, auto_title: bool) -> ApiResult<S
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Appearance {
-    /// Follow the Windows app mode.
     #[default]
     Auto,
     Light,
@@ -272,7 +278,6 @@ impl Appearance {
     }
 }
 
-/// The saved appearance; Auto when the database isn't available.
 pub fn get_appearance() -> Appearance {
     if !ensure_database() {
         return Appearance::Auto;
@@ -287,7 +292,6 @@ pub fn set_appearance(appearance: Appearance) -> ApiResult<()> {
     Ok(db::set_appearance(appearance.to_i64())?)
 }
 
-// ----- Recordings -----
 
 pub fn recording_path(filename: &str) -> ApiResult<PathBuf> {
     let plain = Path::new(filename).file_name().and_then(|n| n.to_str()) == Some(filename);
@@ -309,7 +313,6 @@ fn recording_info(filename: &str) -> ApiResult<RecordingInfo> {
     if db::is_deleted(filename)? {
         return Err(ApiError::new(404, "Recording deleted"));
     }
-    // Automatic cleanup may finish while the recordings list is loading.
     let stat = std::fs::metadata(&filepath).ok().filter(|m| m.is_file());
     let transcript = db::get_transcription(filename)?;
     let metadata = db::get_metadata(filename)?;
@@ -343,7 +346,7 @@ fn recording_info(filename: &str) -> ApiResult<RecordingInfo> {
             .processing_error
             .filter(|e| !e.is_empty())
             .or_else(|| job_error(filename)),
-        processing: job_state(filename).as_deref() == Some("pending"),
+        processing: job_state(filename) == Some(JobStatus::Pending),
         stage: job_stage(filename),
     })
 }
@@ -351,7 +354,7 @@ fn recording_info(filename: &str) -> ApiResult<RecordingInfo> {
 fn require_idle(filename: &str) -> ApiResult<()> {
     let busy_recording = (RECORDER.is_recording() || RECORDER.save_pending())
         && RECORDER.current_file().as_deref() == Some(stem(filename).as_str());
-    if job_state(filename).as_deref() == Some("pending") || busy_recording {
+    if job_state(filename) == Some(JobStatus::Pending) || busy_recording {
         return Err(ApiError::new(
             409,
             "Wait until recording and processing finish.",
@@ -384,13 +387,12 @@ pub fn stop_recording() -> ApiResult<RecorderStatus> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    set_job(&name, "pending");
+    set_job(&name, JobStatus::Pending);
     set_stage(&name, Some("Queued"));
     set_job_error(&name, None);
     if let Err(e) =
-        recording_info(&name).and_then(|_| db::set_job_state(&name, "pending").map_err(Into::into))
+        recording_info(&name).and_then(|_| db::set_job_state(&name, JobStatus::Pending.as_str()).map_err(Into::into))
     {
-        // Audio is already saved. Let the worker report a database failure.
         eprintln!("Could not persist queued processing job: {e}");
     }
     spawn_transcription(name.clone());
@@ -538,7 +540,6 @@ pub fn rename_recording(filename: &str, new_name: &str) -> ApiResult<RecordingIn
     recording_info(filename)
 }
 
-/// The audio file for playback or download, when it exists.
 pub fn audio_file(filename: &str) -> ApiResult<PathBuf> {
     let path = recording_path(filename)?;
     if !path.is_file() {
@@ -547,7 +548,6 @@ pub fn audio_file(filename: &str) -> ApiResult<PathBuf> {
     Ok(path)
 }
 
-// ----- Transcription -----
 
 fn spawn_transcription(filename: String) {
     let spawned = std::thread::Builder::new()
@@ -557,7 +557,7 @@ fn spawn_transcription(filename: String) {
             move || do_transcribe(&filename)
         });
     if spawned.is_err() {
-        set_job(&filename, "error");
+        set_job(&filename, JobStatus::Error);
         set_stage(&filename, None);
         set_job_error(
             &filename,
@@ -566,7 +566,6 @@ fn spawn_transcription(filename: String) {
     }
 }
 
-/// Save the transcript before any destructive audio cleanup.
 fn do_transcribe(filename: &str) {
     let mut transcript_saved = false;
     let mut errors: Vec<String> = Vec::new();
@@ -575,7 +574,7 @@ fn do_transcribe(filename: &str) {
         let settings = db::get_settings().map_err(|e| e.to_string())?;
         recording_info(filename).map_err(|e| e.detail)?;
         db::set_processing_error(filename, None).map_err(|e| e.to_string())?;
-        db::set_job_state(filename, "pending").map_err(|e| e.to_string())?;
+        db::set_job_state(filename, JobStatus::Pending.as_str()).map_err(|e| e.to_string())?;
         set_stage(filename, Some("Transcribing"));
         let result = transcription::transcribe_file(&filepath, None)?;
         set_stage(filename, Some("Saving transcript"));
@@ -612,34 +611,24 @@ fn do_transcribe(filename: &str) {
         };
         errors.push(format!("{prefix}{e}"));
     }
+    let outcome = if transcript_saved {
+        JobStatus::Completed
+    } else {
+        JobStatus::Error
+    };
     let persisted = (|| -> db::DbResult<()> {
         db::ensure_metadata(filename, &timefmt::now_local_naive())?;
         let joined = errors.join(" ");
         db::set_processing_error(filename, (!joined.is_empty()).then_some(joined.as_str()))?;
-        db::set_job_state(
-            filename,
-            if transcript_saved {
-                "completed"
-            } else {
-                "error"
-            },
-        )
+        db::set_job_state(filename, outcome.as_str())
     })();
     if let Err(e) = persisted {
         eprintln!("Could not persist processing outcome: {e}");
         errors.push(e.to_string());
     }
     set_stage(filename, None);
-    // Finalize in memory even if the database cannot store the failure.
     set_job_error(filename, (!errors.is_empty()).then(|| errors.join(" ")));
-    set_job(
-        filename,
-        if transcript_saved {
-            "completed"
-        } else {
-            "error"
-        },
-    );
+    set_job(filename, outcome);
     db::close_connection();
 }
 
@@ -647,7 +636,7 @@ pub fn start_transcription(filename: &str) -> ApiResult<TranscriptionStatus> {
     require_database()?;
     let filepath = recording_path(filename)?;
     if db::get_transcription(filename)?.is_some()
-        || job_state(filename).as_deref() == Some("pending")
+        || job_state(filename) == Some(JobStatus::Pending)
     {
         return get_transcription(filename);
     }
@@ -656,14 +645,14 @@ pub fn start_transcription(filename: &str) -> ApiResult<TranscriptionStatus> {
     }
     recording_info(filename)?;
     db::set_processing_error(filename, None)?;
-    db::set_job_state(filename, "pending")?;
-    set_job(filename, "pending");
+    db::set_job_state(filename, JobStatus::Pending.as_str())?;
+    set_job(filename, JobStatus::Pending);
     set_stage(filename, Some("Queued"));
     set_job_error(filename, None);
     spawn_transcription(filename.to_owned());
     Ok(TranscriptionStatus {
         filename: filename.to_owned(),
-        status: "pending".into(),
+        status: JobStatus::Pending,
         ..Default::default()
     })
 }
@@ -672,16 +661,15 @@ pub fn get_transcription(filename: &str) -> ApiResult<TranscriptionStatus> {
     require_database()?;
     let metadata = db::get_metadata(filename)?.unwrap_or_default();
     let state = job_state(filename);
-    let processing = state.as_deref() == Some("pending");
+    let processing = state == Some(JobStatus::Pending);
     let error = job_error(filename).or(metadata.processing_error.filter(|e| !e.is_empty()));
-    // Transcript availability is independent of post-processing.
     if let Some(existing) = db::get_transcription(filename)? {
         return Ok(TranscriptionStatus {
             filename: filename.to_owned(),
             title: metadata.title,
             processing,
             error,
-            status: "completed".into(),
+            status: JobStatus::Completed,
             text: Some(existing.text),
             language: existing.language,
         });
@@ -689,26 +677,25 @@ pub fn get_transcription(filename: &str) -> ApiResult<TranscriptionStatus> {
     if processing {
         return Ok(TranscriptionStatus {
             filename: filename.to_owned(),
-            status: "pending".into(),
+            status: JobStatus::Pending,
             ..Default::default()
         });
     }
-    if state.as_deref() == Some("error") || error.is_some() {
+    if state == Some(JobStatus::Error) || error.is_some() {
         return Ok(TranscriptionStatus {
             filename: filename.to_owned(),
-            status: "error".into(),
+            status: JobStatus::Error,
             error: Some(error.unwrap_or_else(|| "Unknown error".into())),
             ..Default::default()
         });
     }
     Ok(TranscriptionStatus {
         filename: filename.to_owned(),
-        status: "none".into(),
+        status: JobStatus::None,
         ..Default::default()
     })
 }
 
-/// Update transcription text (e.g. after speaker rename).
 pub fn update_transcription(filename: &str, text: &str) -> ApiResult<TranscriptionStatus> {
     require_database()?;
     if db::get_transcription(filename)?.is_none() {
@@ -719,7 +706,7 @@ pub fn update_transcription(filename: &str, text: &str) -> ApiResult<Transcripti
         .ok_or_else(|| ApiError::new(404, "Transcription not found"))?;
     Ok(TranscriptionStatus {
         filename: filename.to_owned(),
-        status: "completed".into(),
+        status: JobStatus::Completed,
         text: Some(updated.text),
         language: updated.language,
         ..Default::default()
@@ -743,7 +730,6 @@ pub fn search_transcriptions(q: &str) -> ApiResult<Vec<SearchResult>> {
         .collect())
 }
 
-// ----- Sync -----
 
 fn sync_error(e: SyncError) -> ApiError {
     if e.kind == "ValueError" {
@@ -769,7 +755,6 @@ pub fn update_sync_settings(
 }
 
 fn require_sync_idle() -> ApiResult<()> {
-    // Avoid overwriting recordings currently being processed/captured.
     if RECORDER.is_recording() || RECORDER.save_pending() || any_pending() {
         return Err(ApiError::new(
             409,
@@ -825,8 +810,6 @@ mod tests {
         assert!(recording_path("meeting.mp3").is_ok());
     }
 
-    /// End-to-end over a temporary data folder: notes, transcripts, search, settings and a
-    /// mock sync round trip including a conflict.
     #[test]
     fn database_flows() {
         let dir = tempfile::tempdir().unwrap();
@@ -837,7 +820,6 @@ mod tests {
         assert_eq!(get_appearance(), Appearance::Auto);
         set_appearance(Appearance::Dark).unwrap();
         assert_eq!(get_appearance(), Appearance::Dark);
-        // The other settings keep their values.
         assert!(get_settings().unwrap().auto_delete_audio);
 
         db::ensure_metadata("meeting.mp3", "2026-10-05T14:00:00").unwrap();
@@ -865,10 +847,9 @@ mod tests {
         );
         assert_eq!(
             get_transcription("meeting.mp3").unwrap().status,
-            "completed"
+            JobStatus::Completed
         );
 
-        // Mock sync.
         assert_eq!(
             update_sync_settings(true, "", true, None)
                 .unwrap_err()

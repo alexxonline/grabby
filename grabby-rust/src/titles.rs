@@ -1,5 +1,3 @@
-//! Generate recording titles using OpenRouter (port of `app/titles.py`).
-
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -52,7 +50,6 @@ pub fn suggest_title(transcript: &str) -> Result<String, String> {
     Ok(clean_title(title))
 }
 
-/// `" ".join(title.strip().strip('"').split())[:160]`
 pub fn clean_title(title: &str) -> String {
     let collapsed = title.trim().trim_matches('"').split_whitespace().collect::<Vec<_>>().join(" ");
     collapsed.chars().take(160).collect()

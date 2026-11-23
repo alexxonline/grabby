@@ -1,5 +1,3 @@
-//! The recordings library (`pages/RecordingsPage.tsx`).
-
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -8,7 +6,7 @@ use rune::{El, FileDialogOptions, Key, TextEdit, Tx, col, row, text};
 use rune_kit::{ButtonVariant, Progress, SegmentedControl, Spinner, TextInput};
 
 use super::{P, Page, Ui, button, button_tx, card, error, h1, muted, navigate, notify, open_transcription, player};
-use crate::core::{self, RecordingInfo, StorageInfo, TranscriptionStatus};
+use crate::core::{self, JobStatus, RecordingInfo, StorageInfo, TranscriptionStatus};
 use crate::timefmt;
 
 const SORT_LABELS: [&str; 3] = ["Newest", "Oldest", "Name"];
@@ -53,7 +51,6 @@ pub fn enter(s: &mut Ui) {
     fetch(s);
 }
 
-/// Esc closes an open delete prompt; true when there was one.
 pub fn cancel_confirm(s: &mut Ui) -> bool {
     s.recs.confirm_delete.take().is_some()
 }
@@ -71,7 +68,6 @@ fn fetch(s: &mut Ui) {
     after_list_change(s);
 }
 
-/// Storage use and transcription states follow every list change.
 fn after_list_change(s: &mut Ui) {
     if let Ok(storage) = core::get_storage() {
         s.recs.storage = Some(storage);
@@ -85,7 +81,7 @@ fn after_list_change(s: &mut Ui) {
         .collect();
     for filename in missing {
         if let Ok(status) = core::get_transcription(&filename) {
-            if status.status != "none" {
+            if status.status != JobStatus::None {
                 s.recs.transcriptions.insert(filename, status);
             }
         }
@@ -124,16 +120,18 @@ pub fn tick(s: &mut Ui) -> bool {
         .recs
         .transcriptions
         .iter()
-        .filter(|(_, t)| t.status == "pending" || t.processing)
+        .filter(|(_, t)| t.status == JobStatus::Pending || t.processing)
         .map(|(f, _)| f.clone())
         .collect();
     for filename in polling {
-        // Retry transient failures on the next interval.
-        if let Ok(updated) = core::get_transcription(&filename) {
-            if s.recs.transcriptions.get(&filename) != Some(&updated) {
-                s.recs.transcriptions.insert(filename, updated);
-                changed = true;
+        match core::get_transcription(&filename) {
+            Ok(updated) => {
+                if s.recs.transcriptions.get(&filename) != Some(&updated) {
+                    s.recs.transcriptions.insert(filename, updated);
+                    changed = true;
+                }
             }
+            Err(e) => eprintln!("Could not refresh transcription status for {filename}: {}", e.detail),
         }
     }
     changed
@@ -142,7 +140,7 @@ pub fn tick(s: &mut Ui) -> bool {
 fn handle_transcribe(s: &mut Ui, filename: &str) {
     match core::start_transcription(filename) {
         Ok(status) => {
-            let completed = status.status == "completed";
+            let completed = status.status == JobStatus::Completed;
             s.recs.transcriptions.insert(filename.to_owned(), status);
             fetch(s);
             if completed {
@@ -236,9 +234,9 @@ fn transcribe_button(s: &Ui, p: &P, rec: &RecordingInfo) -> El {
         .recs
         .transcriptions
         .get(&rec.filename)
-        .map(|t| t.status.as_str())
+        .map(|t| t.status)
     {
-        Some("pending") => row()
+        Some(JobStatus::Pending) => row()
             .key("transcribing")
             .gap(space::S2)
             .center_y()
@@ -250,7 +248,7 @@ fn transcribe_button(s: &Ui, p: &P, rec: &RecordingInfo) -> El {
                     .font(type_::LABEL)
                     .color(p.t.text_secondary),
             ),
-        Some("completed") => button(
+        Some(JobStatus::Completed) => button(
             p,
             "transcript",
             "Transcript",
@@ -258,7 +256,7 @@ fn transcribe_button(s: &Ui, p: &P, rec: &RecordingInfo) -> El {
             false,
             move |s: &mut Ui| open_transcription(s, &filename, false),
         ),
-        Some("error") => {
+        Some(JobStatus::Error) => {
             let message = s
                 .recs
                 .transcriptions
@@ -479,12 +477,12 @@ fn matches_filter(r: &RecordingsPage, rec: &RecordingInfo) -> bool {
     let status = r
         .transcriptions
         .get(&rec.filename)
-        .map(|t| t.status.as_str());
+        .map(|t| t.status);
     match r.filter {
         Filter::All => true,
-        Filter::Transcribed => status == Some("completed"),
-        Filter::Processing => rec.processing || status == Some("pending"),
-        Filter::Failed => status == Some("error") || rec.processing_error.is_some(),
+        Filter::Transcribed => status == Some(JobStatus::Completed),
+        Filter::Processing => rec.processing || status == Some(JobStatus::Pending),
+        Filter::Failed => status == Some(JobStatus::Error) || rec.processing_error.is_some(),
     }
 }
 

@@ -1,5 +1,3 @@
-//! A recording's transcript with speaker renaming (`pages/TranscriptionPage.tsx`).
-
 use std::time::{Duration, Instant};
 
 use rune::tok::{space, type_};
@@ -8,7 +6,7 @@ use rune_kit::{ButtonVariant, TextInput};
 
 use super::notes::{self, Source};
 use super::{P, Page, Ui, button, button_tx, card, error, h1, muted, navigate, recording_tabs};
-use crate::core::{self, TranscriptionStatus};
+use crate::core::{self, JobStatus, TranscriptionStatus};
 use crate::speakers::{SpeakerEntry, extract_speakers, replace_speaker, split_label};
 
 #[derive(Default)]
@@ -38,7 +36,7 @@ fn poll_now(s: &mut Ui) {
     s.tr.last_poll = Some(Instant::now());
     match core::get_transcription(&s.tr.filename) {
         Ok(ts) => {
-            if ts.status == "completed" && !s.tr.loaded_text {
+            if ts.status == JobStatus::Completed && !s.tr.loaded_text {
                 if let Some(text) = &ts.text {
                     s.tr.loaded_text = true;
                     s.tr.display_text = text.clone();
@@ -58,7 +56,7 @@ pub fn tick(s: &mut Ui) -> bool {
         s.tr.copied_until = None;
         changed = true;
     }
-    let waiting = s.tr.transcription.as_ref().is_some_and(|t| t.status == "pending" || t.processing);
+    let waiting = s.tr.transcription.as_ref().is_some_and(|t| t.status == JobStatus::Pending || t.processing);
     if waiting && s.tr.last_poll.is_none_or(|t| t.elapsed() >= Duration::from_secs(2)) {
         poll_now(s);
         changed = true;
@@ -100,7 +98,6 @@ fn confirm_rename(s: &mut Ui) {
         cancel_editing(s);
         return;
     }
-    // Prepare the edit, then publish it only after it is saved.
     let updated_text = replace_speaker(&s.tr.display_text, &current, &new_name);
     s.tr.saving = true;
     match core::update_transcription(&s.tr.filename, &updated_text) {
@@ -119,7 +116,6 @@ fn copy(s: &mut Ui, tx: &mut Tx) {
     s.tr.copied_until = Some(Instant::now() + Duration::from_secs(2));
 }
 
-/// Transcript text with speaker labels highlighted.
 fn render_transcript(p: &P, body: &str) -> El {
     let mut lines = col().key("transcript-body").w_full().gap(space::S2);
     for (i, line) in body.split('\n').enumerate() {
@@ -211,18 +207,18 @@ pub fn view(s: &Ui, p: &P) -> El {
     if let Some(e) = &t.error {
         transcript = transcript.child(error(p, "error", e.clone()));
     }
-    let status = ts.map(|x| x.status.as_str()).unwrap_or("none");
+    let status = ts.map(|x| x.status).unwrap_or_default();
     if ts.is_some_and(|x| x.processing) {
         transcript = transcript.child(muted(p, "processing", "Finishing recording title and cleanup...").role("status"));
     }
-    if status == "completed" {
+    if status == JobStatus::Completed {
         if let Some(e) = ts.and_then(|x| x.error.clone()) {
             transcript = transcript.child(error(p, "post-error", e));
         }
     } else {
         let message = match status {
-            "pending" => "The transcript is processing. You can add notes now.".to_owned(),
-            "error" => format!("Transcription failed: {}", ts.and_then(|x| x.error.clone()).unwrap_or_default()),
+            JobStatus::Pending => "The transcript is processing. You can add notes now.".to_owned(),
+            JobStatus::Error => format!("Transcription failed: {}", ts.and_then(|x| x.error.clone()).unwrap_or_default()),
             _ => "No transcription available yet. You can still add notes.".to_owned(),
         };
         transcript = transcript.child(muted(p, "status-message", message));
@@ -230,7 +226,7 @@ pub fn view(s: &Ui, p: &P) -> El {
     if !t.speakers.is_empty() {
         transcript = transcript.child(speaker_editor(s, p));
     }
-    if status == "completed" {
+    if status == JobStatus::Completed {
         transcript = transcript.child(render_transcript(p, &t.display_text));
     }
     col()

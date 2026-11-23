@@ -1,5 +1,3 @@
-//! Per-recording notes with autosave (`components/NotesEditor.tsx`).
-
 use std::time::{Duration, Instant};
 
 use rune::tok::{space, type_};
@@ -11,7 +9,6 @@ use crate::core;
 
 #[derive(Default)]
 pub struct NotesState {
-    /// What the editor is bound to: a notes id or a recording filename.
     pub source: Option<Source>,
     pub id: Option<String>,
     pub edit: TextEdit,
@@ -19,7 +16,6 @@ pub struct NotesState {
     pub ready: bool,
     pub status: String,
     pub error: String,
-    /// When the text last changed without being saved (600 ms autosave debounce).
     pub changed_at: Option<Instant>,
 }
 
@@ -29,7 +25,6 @@ pub enum Source {
     File(String),
 }
 
-/// Binds the editor to a recording's notes, saving the previous notes first.
 pub fn open(s: &mut Ui, source: Source) {
     if s.notes.source.as_ref() == Some(&source) && s.notes.ready {
         return;
@@ -66,7 +61,6 @@ fn load(s: &mut Ui) {
     }
 }
 
-/// Saves pending edits now (blur, tab switch, navigation, window close).
 pub fn flush(s: &mut Ui) {
     if s.notes.ready && s.notes.edit.text != s.notes.saved {
         save(s);

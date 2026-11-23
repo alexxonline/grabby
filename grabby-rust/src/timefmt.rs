@@ -1,12 +1,9 @@
-//! ISO-8601 timestamp formatting and parsing helpers.
-
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 fn frac(micros: u32) -> String {
     if micros == 0 { String::new() } else { format!(".{micros:06}") }
 }
 
-/// `datetime.now(timezone.utc).isoformat()`.
 pub fn now_utc() -> String {
     utc_iso(Utc::now())
 }
@@ -15,24 +12,20 @@ pub fn utc_iso(d: DateTime<Utc>) -> String {
     format!("{}{}+00:00", d.format("%Y-%m-%dT%H:%M:%S"), frac(d.timestamp_subsec_micros()))
 }
 
-/// `datetime.astimezone().isoformat()` for a local time.
 pub fn local_aware(d: DateTime<Local>) -> String {
     format!("{}{}{}", d.format("%Y-%m-%dT%H:%M:%S"), frac(d.timestamp_subsec_micros()), d.format("%:z"))
 }
 
-/// `datetime.now().isoformat()` (naive local time).
 pub fn now_local_naive() -> String {
     let d = Local::now().naive_local();
     format!("{}{}", d.format("%Y-%m-%dT%H:%M:%S"), frac(d.and_utc().timestamp_subsec_micros()))
 }
 
-/// A parsed `fromisoformat` value: aware or naive.
 pub enum Parsed {
     Aware(DateTime<FixedOffset>),
     Naive(NaiveDateTime),
 }
 
-/// `datetime.fromisoformat(value.replace('Z', '+00:00'))`.
 pub fn parse_iso(value: &str) -> Option<Parsed> {
     let v = value.trim().replace('Z', "+00:00");
     for fmt in ["%Y-%m-%dT%H:%M:%S%.f%:z", "%Y-%m-%d %H:%M:%S%.f%:z", "%Y-%m-%dT%H:%M%:z", "%Y-%m-%dT%H:%M:%S%.f%z"] {
@@ -52,7 +45,6 @@ fn naive_local(n: NaiveDateTime) -> DateTime<Utc> {
     Local.from_local_datetime(&n).earliest().map(|d| d.with_timezone(&Utc)).unwrap_or_else(|| n.and_utc())
 }
 
-/// sync.utc(): normalise to UTC; naive values are local when `local`, else UTC.
 pub fn to_utc(value: &str, local: bool) -> Option<String> {
     let d = match parse_iso(value)? {
         Parsed::Aware(d) => d.with_timezone(&Utc),
@@ -62,7 +54,6 @@ pub fn to_utc(value: &str, local: bool) -> Option<String> {
     Some(utc_iso(d))
 }
 
-/// `fromisoformat(..).timestamp()` (naive = local time), for sorting.
 pub fn timestamp(value: &str) -> f64 {
     let d = match parse_iso(value) {
         Some(Parsed::Aware(d)) => d.with_timezone(&Utc),
@@ -72,7 +63,6 @@ pub fn timestamp(value: &str) -> f64 {
     d.timestamp() as f64 + f64::from(d.timestamp_subsec_micros()) / 1e6
 }
 
-/// A short human date for the UI, like the web app's `toLocaleDateString` with time.
 pub fn display(value: &str) -> String {
     let d = match parse_iso(value) {
         Some(Parsed::Aware(d)) => d.with_timezone(&Local),

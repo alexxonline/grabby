@@ -1,20 +1,12 @@
-//! Data locations and environment configuration (`.env`), read without mutating the process
-//! environment.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
-/// Values loaded from `.env` (lowest precedence: real environment variables win).
 static DOTENV: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
 
-/// Where the database, recordings and `.env` live.
-///
-/// `GRABBY_DATA_DIR` wins; otherwise `%LOCALAPPDATA%\Grabby` (or `~/.local/share/grabby`).
 pub fn data_dir() -> &'static Path {
     DATA_DIR.get_or_init(|| {
-        // Tests never read or write the user's real data.
         #[cfg(test)]
         let dir = std::env::temp_dir().join(format!("grabby-test-{}", std::process::id()));
         #[cfg(not(test))]
@@ -28,7 +20,6 @@ pub fn data_dir() -> &'static Path {
     })
 }
 
-/// Overrides the data directory (tests). Must run before anything reads it.
 #[cfg(test)]
 pub fn set_data_dir(dir: PathBuf) {
     let _ = DATA_DIR.set(dir);
@@ -50,7 +41,6 @@ fn dotenv() -> &'static RwLock<HashMap<String, String>> {
     DOTENV.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// Loads `<data dir>/.env`, then `./.env` for development (earlier files win).
 pub fn load_env() {
     let mut values = HashMap::new();
     for path in [env_path(), PathBuf::from(".env")] {
@@ -63,8 +53,6 @@ pub fn load_env() {
     *dotenv().write().unwrap_or_else(|e| e.into_inner()) = values;
 }
 
-/// `os.getenv(name)`. API keys come from the DPAPI store (`configs.dat`) or a real environment
-/// variable, never from a plain-text `.env` file.
 pub fn env_var(name: &str) -> Option<String> {
     if crate::secrets::NAMES.contains(&name) {
         return crate::secrets::get(name).or_else(|| std::env::var(name).ok().filter(|v| !v.is_empty()));
@@ -75,12 +63,10 @@ pub fn env_var(name: &str) -> Option<String> {
     dotenv().read().unwrap_or_else(|e| e.into_inner()).get(name).cloned()
 }
 
-/// Whether a key's value comes from a process environment variable rather than the store.
 pub fn from_process_env(name: &str) -> bool {
     std::env::var(name).is_ok_and(|v| !v.is_empty())
 }
 
-/// Deletes `KEY=...` lines for `keys` from a `.env` file, leaving a note where they were.
 pub fn remove_env_file_keys(path: &Path, keys: &[String]) -> std::io::Result<()> {
     let existing = std::fs::read_to_string(path)?;
     let mut changed = false;

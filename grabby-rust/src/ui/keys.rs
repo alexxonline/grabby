@@ -1,5 +1,3 @@
-//! The API keys section of Settings: keys entered here are, encrypted with Windows DPAPI into `configs.dat`, never shown again.
-
 use rune::tok::{space, type_};
 use rune::{El, TextEdit, col, row, text};
 use rune_kit::{ButtonVariant, TextInput};
@@ -35,7 +33,6 @@ const KEYS: [KeyInfo; 3] = [
 pub struct KeysPage {
     pub edits: [TextEdit; 3],
     pub stored: [bool; 3],
-    /// Per key: a confirmation or an error.
     pub messages: [Option<(bool, String)>; 3],
 }
 
@@ -46,7 +43,6 @@ pub fn enter(s: &mut Ui) {
     s.keys.messages = Default::default();
 }
 
-/// Moves the typed key out of the field and wipes the field's buffer.
 fn take_input(edit: &mut TextEdit) -> String {
     let value = edit.text.trim().to_owned();
     // SAFETY: zeroing a String's bytes keeps it valid UTF-8.
@@ -125,7 +121,6 @@ fn key_card(s: &Ui, p: &P, i: usize) -> El {
     c
 }
 
-/// The API keys section of the Settings page.
 pub fn view(s: &Ui, p: &P) -> El {
     let mut page = col()
         .key("api-keys")
@@ -146,7 +141,6 @@ pub fn view(s: &Ui, p: &P) -> El {
     page
 }
 
-/// Keeps the rest of Settings in step: the auto-title hint and the sync key status.
 fn after_change(s: &mut Ui, i: usize) {
     s.keys.stored[i] = secrets::is_set(KEYS[i].name);
     if let Ok(settings) = crate::core::get_settings() {
@@ -157,7 +151,6 @@ fn after_change(s: &mut Ui, i: usize) {
     }
 }
 
-/// Re-reads which keys are stored (the sync panel can save the sync key too).
 pub fn refresh_status(s: &mut Ui) {
     for (i, key) in KEYS.iter().enumerate() {
         s.keys.stored[i] = secrets::is_set(key.name);

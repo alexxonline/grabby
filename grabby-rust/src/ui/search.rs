@@ -1,5 +1,3 @@
-//! Full-text transcript search (`pages/SearchPage.tsx`).
-
 use rune::tok::{radius, space, type_};
 use rune::{El, Span, TextEdit, col, row, text};
 use rune_kit::{ButtonVariant, TextInput};
@@ -13,7 +11,6 @@ pub struct SearchPage {
     pub query: TextEdit,
     pub results: Vec<SearchResult>,
     pub searched: bool,
-    /// The query the results answer ("No results found for ...").
     pub searched_query: String,
     pub error: Option<String>,
 }

@@ -1,9 +1,3 @@
-//! The Rune UI: pages and components.
-//!
-//! Pages call the service layer in [`crate::core`] directly instead of over HTTP. Slow work
-//! (starting/stopping capture, sync, transcription requests) runs on worker threads and lands
-//! back on the UI thread through [`AppHandle::update`].
-
 mod keys;
 mod notes;
 mod player;
@@ -39,18 +33,14 @@ pub struct Ui {
     pub sync: settings::SyncPanel,
     pub tr: transcription::TranscriptionPage,
     pub notes: notes::NotesState,
-    /// The Transcript / Notes tab of the recording details.
     pub detail_tab: usize,
     pub player: Option<player::Player>,
-    /// Auto follows the Windows app mode.
     pub appearance: crate::core::Appearance,
-    /// A short confirmation shown bottom-right until it times out or is closed.
     pub toast: Option<(String, Instant)>,
 }
 
 const TOAST_SECONDS: u64 = 4;
 
-/// Shows a brief confirmation ("Recording discarded").
 pub fn notify(s: &mut Ui, message: impl Into<String>) {
     s.toast = Some((message.into(), Instant::now()));
 }
@@ -77,7 +67,6 @@ fn init() -> Ui {
 
 static HANDLE: OnceLock<AppHandle<Ui>> = OnceLock::new();
 
-/// Runs `work` on a worker thread and `done` with its result on the UI thread.
 pub fn spawn_task<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, done: impl FnOnce(&mut Ui, T) + Send + 'static) {
     let Some(handle) = HANDLE.get().cloned() else { return };
     std::thread::spawn(move || {
@@ -87,7 +76,6 @@ pub fn spawn_task<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, 
     });
 }
 
-/// Switches page, saving notes first like the web app does when the editor unmounts.
 pub fn navigate(s: &mut Ui, page: Page) {
     notes::flush(s);
     s.page = page;
@@ -123,7 +111,6 @@ fn poll(s: &mut Ui, _clock: f64, tx: &mut Tx) -> bool {
     changed
 }
 
-/// Global shortcuts: Ctrl+R start/stop, Ctrl+F search, Ctrl+1-4 pages, Esc cancels a delete prompt.
 fn on_key(s: &mut Ui, ev: &KeyEvent, _: &mut Tx) -> bool {
     if ev.key == Key::Escape {
         return recordings::cancel_confirm(s);
@@ -152,7 +139,6 @@ fn on_close(s: &mut Ui, _: &mut Tx) {
     notes::flush(s);
 }
 
-/// Everything a view needs to paint itself.
 pub struct P {
     pub t: Theme,
     pub k: Kit,
@@ -209,7 +195,6 @@ pub fn link(p: &P, key: &str, label: impl Into<String>, f: impl Fn(&mut Ui) + 's
     text(label.clone()).key(key).font(type_::BODY).color(p.accent).role("link").label(label).focusable(true).on_press(f)
 }
 
-/// The Transcript / Notes tabs (`RecordingTabs`).
 pub fn recording_tabs(s: &Ui, p: &P, live: bool, transcript: El) -> El {
     let labels = [if live { "Live transcript" } else { "Transcript" }, "Notes"];
     let tabs = SegmentedControl::new(&labels, Some(s.detail_tab))
@@ -300,12 +285,10 @@ fn view(s: &Ui, cx: &mut Cx<Ui>) -> El {
 }
 
 pub fn run() {
-    // Taskbar/title-bar icon: the exe resource embedded by build.rs (winresource uses id 1).
     #[cfg(windows)]
     rune::set_app_icon_resource(1);
     let app = App::new(AppSpec::<Ui> {
         poll: Some(poll),
-        // Headless snapshots of each page: `grabby --snap out.png --scene settings`.
         scenes: &[
             ("recorder", |_| {}),
             ("recordings", |s| navigate(s, Page::Recordings)),

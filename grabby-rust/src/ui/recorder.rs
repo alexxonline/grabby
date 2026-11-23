@@ -1,5 +1,3 @@
-//! The recorder (`pages/RecorderPage.tsx`).
-
 use std::time::{Duration, Instant};
 
 use rune::tok::{space, type_};
@@ -24,14 +22,12 @@ pub struct RecorderPage {
     pub error: Option<String>,
     pub operation: Option<Operation>,
     pub saved_file: Option<String>,
-    /// Length of the recording just stopped, in seconds.
     pub saved_duration: Option<u64>,
     last_poll: Option<Instant>,
     elapsed: u64,
 }
 
 pub fn enter(s: &mut Ui) {
-    // The "saved" message only belongs to the visit right after stopping.
     s.rec.saved_file = None;
     s.rec.saved_duration = None;
     s.rec.last_poll = None;
@@ -70,7 +66,6 @@ pub fn tick(s: &mut Ui) -> bool {
         s.rec.elapsed = elapsed;
         changed = true;
     }
-    // Keep finished details only for this visit, not from a stale polled notes ID.
     let st = &s.rec.status;
     let show_details = st.notes_id.is_some()
         && (st.recording || st.save_pending || st.saving || s.rec.saved_file.is_some());
@@ -136,7 +131,6 @@ fn handle_discard(s: &mut Ui) {
     });
 }
 
-/// Ctrl+R: start, stop or retry the save, like the main button.
 pub fn toggle(s: &mut Ui) {
     if s.page != Page::Recorder {
         navigate(s, Page::Recorder);
@@ -154,7 +148,6 @@ pub fn toggle(s: &mut Ui) {
 fn handle_stop(s: &mut Ui) {
     s.rec.error = None;
     s.rec.status.error = None;
-    // Only a live recording has a known length; a recovered one does not.
     let elapsed = elapsed_of(&s.rec.status);
     s.rec.saved_duration = (s.rec.status.recording && elapsed > 0).then_some(elapsed);
     s.rec.operation = Some(Operation::Stopping);
@@ -178,7 +171,6 @@ fn source_label(source: &str) -> &'static str {
     if source == "you" { "You" } else { "Others" }
 }
 
-/// "You: text" with the label bold.
 fn labelled(key: String, label: &str, body: &str, color: rune::Color) -> El {
     let line = format!("{label}: {body}");
     let bold = label.len() + 1;

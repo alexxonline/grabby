@@ -1,9 +1,3 @@
-//! Records system audio (WASAPI loopback) and microphone, then mixes them
-//! (port of `app/recorder.py`).
-//!
-//! Capture goes to raw PCM files in a hidden `.capture-<uuid>` folder with a JSON manifest, so
-//! an interrupted capture can be recovered and saved later ("Retry Save").
-
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -83,10 +77,8 @@ struct Manifest {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecorderError {
-    /// Invalid request (maps to status 400).
     #[error("{0}")]
     Invalid(String),
-    /// Conflicting state, e.g. already recording (maps to status 409).
     #[error("{0}")]
     Conflict(String),
 }
@@ -163,7 +155,6 @@ impl MeetingRecorder {
         std::fs::rename(temporary, dir.join("capture.json"))
     }
 
-    /// Restore one interrupted capture at a time, without guessing raw PCM formats.
     pub fn recover_pending(&self) {
         let mut s = self.lock();
         if self.is_recording() || s.saving || s.save_pending || thread_alive(&s.thread) {
@@ -305,7 +296,6 @@ impl MeetingRecorder {
         }
     }
 
-    /// Throw away a recording that could not be saved (captured audio, any partial export and its notes).
     pub fn discard_pending(&self) -> Result<(), RecorderError> {
         let mut s = self.lock();
         if self.is_recording() || s.saving || thread_alive(&s.thread) {
@@ -342,10 +332,8 @@ impl MeetingRecorder {
         }
     }
 
-    /// Raw PCM avoids both unbounded RAM and WAV's 4 GiB capture limit.
     fn capture(&'static self) -> Result<(), String> {
         let host = cpal::default_host();
-        // WASAPI loopback: an input stream on the default output (render) device.
         let loopback = host.default_output_device().ok_or("No WASAPI loopback device found")?;
         let mic = host.default_input_device().ok_or("No default input device available")?;
         let lb_config = loopback.default_output_config().map_err(|e| e.to_string())?;
@@ -397,8 +385,6 @@ impl MeetingRecorder {
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
-            // WASAPI delivers no loopback packets while nothing plays; keep the system track
-            // aligned with the microphone by writing that silence.
             let expected = (started.elapsed().as_secs_f64() * f64::from(params.lb_rate)) as u64;
             let slack = u64::from(params.lb_rate) / 4;
             if loopback_frames + slack < expected {
@@ -427,7 +413,6 @@ impl MeetingRecorder {
             (s.capture_dir.clone(), s.current_file.clone().unwrap_or_default(), s.params, s.saved_output.clone(), s.notes_id.clone())
         };
         let capture_dir = capture_dir.ok_or("No captured audio to save")?;
-        // Keep intermediate and incomplete exports out of the recordings listing.
         let mixed_wav = capture_dir.join("mixed.wav");
         let encoded_mp3 = capture_dir.join("mixed.mp3");
         let output_file = match saved {
@@ -447,7 +432,6 @@ impl MeetingRecorder {
                         out
                     }
                 };
-                // If attaching notes fails, retry it without exporting a second file.
                 let mut s = self.lock();
                 s.saved_output = Some(output.clone());
                 Self::write_manifest(&s).map_err(|e| e.to_string())?;
@@ -458,8 +442,6 @@ impl MeetingRecorder {
         if let Some(id) = notes_id {
             db::attach_notes(&id, &name).map_err(|e| e.to_string())?;
         }
-        // Retire recovery first: leftover PCM after a cleanup failure must not make a
-        // successfully saved meeting appear interrupted again.
         for file in ["capture.json", "capture.tmp", "loopback.pcm", "mic.pcm", "mixed.wav", "mixed.mp3"] {
             let _ = std::fs::remove_file(capture_dir.join(file));
         }
@@ -481,7 +463,6 @@ fn open_stream(device: &cpal::Device, config: &cpal::SupportedStreamConfig, inde
     let stream_config: cpal::StreamConfig = config.config();
     let err_tx = tx.clone();
     let on_error = move |err: cpal::Error| {
-        // Device switches and glitches are reported but don't end the meeting.
         match err.kind() {
             cpal::ErrorKind::DeviceChanged | cpal::ErrorKind::Xrun | cpal::ErrorKind::RealtimeDenied => {
                 eprintln!("audio stream: {err}")
@@ -517,7 +498,6 @@ fn open_stream(device: &cpal::Device, config: &cpal::SupportedStreamConfig, inde
     stream.map_err(|e| e.to_string())
 }
 
-/// If a file with this stem already exists in the recordings folder, append _1, _2, ...
 fn unique_stem(stem: &str) -> db::DbResult<String> {
     let existing: Vec<String> = std::fs::read_dir(config::recordings_dir())
         .map(|rd| {
@@ -540,11 +520,9 @@ fn unique_stem(stem: &str) -> db::DbResult<String> {
     }
 }
 
-/// Validates a recording name: 1–160 characters without Windows filename restrictions.
 pub fn validate_stem(filename: &str) -> Result<String, String> {
     let filename = filename.strip_suffix(".mp3").unwrap_or(filename);
     let filename = filename.strip_suffix(".wav").unwrap_or(filename);
-    // Windows device names remain reserved even when followed by an extension.
     let device = filename.split('.').next().unwrap_or("").trim_end_matches(' ').to_uppercase();
     let mut reserved: Vec<String> = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].map(String::from).to_vec();
     for prefix in ["COM", "LPT"] {
@@ -567,7 +545,6 @@ pub fn validate_stem(filename: &str) -> Result<String, String> {
     Ok(filename.to_owned())
 }
 
-/// Reads a PCM file as aligned blocks converted to the target format.
 struct PcmChunks {
     file: Option<File>,
     channels: usize,
@@ -610,7 +587,6 @@ impl PcmChunks {
     }
 }
 
-/// Minimal streaming PCM16 WAV writer (header sizes patched on finish).
 struct WavWriter {
     out: BufWriter<File>,
     data_len: u64,
@@ -669,7 +645,6 @@ fn mix_to_wav(capture_dir: &Path, p: Params, output: &Path) -> std::io::Result<(
         if a.is_empty() && b.is_empty() {
             break;
         }
-        // Mix the overlapping part; past the end of one track, the other plays alone.
         let n = match (a_done, b_done) {
             (true, true) => a.len().max(b.len()),
             (true, false) => b.len(),
@@ -683,7 +658,6 @@ fn mix_to_wav(capture_dir: &Path, p: Params, output: &Path) -> std::io::Result<(
     wav.finish()
 }
 
-/// Encode with ffmpeg without loading the whole meeting into memory.
 fn export_mp3(source: &Path, output: &Path) -> Result<(), String> {
     let mut command = std::process::Command::new("ffmpeg");
     command
@@ -757,7 +731,6 @@ mod tests {
         let data = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
         assert_eq!(data, bytes.len() - 44);
         let samples = bytes_to_i16(&bytes[44..]);
-        // The microphone (2 s at 4 kHz) outlasts the 1 s system track once upsampled.
         assert!(samples.len() >= 8000 * 2 * 2 - 8);
         assert_eq!(samples[100], 150);
         assert_eq!(*samples.last().unwrap(), 50);

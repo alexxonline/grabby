@@ -1,10 +1,3 @@
-//! ElevenLabs Scribe v3 transcription service.
-//!
-//! Sends the request the official ElevenLabs SDK (version 2.68.0) sends for
-//! `model_id=scribe_v3`, `tag_audio_events=false` and `diarize=true`: a multipart POST to
-//! `/v1/speech-to-text` with the `xi-api-key` header, a 240 s timeout and two retries on
-//! 408/409/429/5xx.
-
 use std::path::Path;
 use std::time::Duration;
 
@@ -66,7 +59,6 @@ fn retry_delay(headers: &reqwest::header::HeaderMap, attempt: u32) -> Duration {
     Duration::from_secs_f64((0.5 * 2f64.powi(attempt as i32)).min(60.0))
 }
 
-/// Transcribe an audio file using ElevenLabs Scribe v3 with speaker diarization.
 pub fn transcribe_file(filepath: &Path, language_code: Option<&str>) -> Result<TranscriptResult, String> {
     let key = api_key()?;
     let client = reqwest::blocking::Client::builder()
@@ -113,11 +105,9 @@ pub fn transcribe_file(filepath: &Path, language_code: Option<&str>) -> Result<T
     }
 }
 
-/// Group consecutive words by the same speaker into "Speaker N: ..." lines.
 pub fn format_diarized(transcription: &ConvertResponse) -> String {
     let words = match &transcription.words {
         Some(w) if !w.is_empty() => w,
-        // Fallback: plain text if no word-level data.
         _ => return transcription.text.clone(),
     };
     let mut segments: Vec<(Option<String>, String)> = Vec::new();

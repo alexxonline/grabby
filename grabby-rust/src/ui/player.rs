@@ -1,5 +1,3 @@
-//! The bottom audio player (`components/AudioPlayer.tsx`), playing through rodio.
-
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -18,7 +16,6 @@ pub struct Player {
     _sink: rodio::MixerDeviceSink,
     player: rodio::Player,
     pub duration: f64,
-    /// Position shown while the user drags the progress bar.
     pub drag: Option<f64>,
     pub error: Option<String>,
     shown: (bool, u64),
@@ -68,7 +65,6 @@ impl Player {
             return;
         }
         if self.player.empty() {
-            // Ended: start again from the beginning.
             if let Err(e) = self.load() {
                 self.error = Some(e);
                 return;
@@ -93,7 +89,6 @@ impl Player {
     }
 }
 
-/// Opens (or closes, when it is already playing) the player for a recording.
 pub fn toggle_for(s: &mut Ui, filename: &str, title: &str) {
     if s.player.as_ref().is_some_and(|p| p.filename == filename) {
         s.player = None;

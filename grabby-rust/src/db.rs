@@ -1,7 +1,3 @@
-//! SQLite database with FTS5 for storing transcriptions.
-//!
-//! Every thread gets its own connection.
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -18,13 +14,11 @@ thread_local! {
 
 fn open() -> DbResult<Connection> {
     let conn = Connection::open(config::db_path())?;
-    // sqlite3.connect's default 5 s timeout.
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()))?;
     Ok(conn)
 }
 
-/// Runs `f` with this thread's connection, opening it on first use.
 pub fn with_conn<T>(f: impl FnOnce(&Connection) -> DbResult<T>) -> DbResult<T> {
     CONN.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -35,7 +29,6 @@ pub fn with_conn<T>(f: impl FnOnce(&Connection) -> DbResult<T>) -> DbResult<T> {
     })
 }
 
-/// Closes this thread's connection, including after failed initialization.
 pub fn close_connection() {
     CONN.with(|cell| {
         cell.borrow_mut().take();
@@ -142,7 +135,6 @@ pub struct SearchRow {
     pub snippet: String,
 }
 
-/// Search literal user terms, requiring each whitespace-separated term.
 pub fn search_transcriptions(query: &str) -> DbResult<Vec<SearchRow>> {
     let terms: Vec<&str> = query.split_whitespace().collect();
     if terms.is_empty() {
@@ -194,7 +186,6 @@ pub fn get_settings() -> DbResult<RecordingSettings> {
     })
 }
 
-/// UI appearance: 0 = follow Windows, 1 = light, 2 = dark.
 pub fn get_appearance() -> DbResult<i64> {
     with_conn(|conn| {
         Ok(conn
@@ -337,7 +328,6 @@ pub fn recover_jobs() -> DbResult<()> {
     })
 }
 
-/// Recordings hidden by a synced deletion tombstone.
 pub fn deleted_filenames() -> DbResult<Vec<String>> {
     with_conn(|conn| {
         let mut stmt = conn.prepare("SELECT filename FROM sync_records WHERE deleted_at IS NOT NULL")?;
@@ -355,7 +345,6 @@ pub fn is_deleted(filename: &str) -> DbResult<bool> {
     })
 }
 
-/// Titles for many filenames at once (search results).
 pub fn titles() -> DbResult<HashMap<String, Option<String>>> {
     with_conn(|conn| {
         let mut stmt = conn.prepare("SELECT filename, title FROM recording_metadata")?;
